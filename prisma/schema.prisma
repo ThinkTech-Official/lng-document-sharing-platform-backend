@@ -1,0 +1,217 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  SUPERADMIN
+  ADMIN
+  CONTRACTOR
+}
+
+enum DocumentState {
+  DRAFT
+  PUBLISHED
+  UNPUBLISHED
+}
+
+enum AccessType {
+  ALL
+  RESTRICTED
+}
+
+enum FileType {
+  PDF
+  DOC
+  EXCEL
+  IMAGE
+}
+
+enum UploadStatus {
+  UPLOADING
+  READY
+  FAILED
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  name                  String
+  password              String?
+  role                  Role
+  is_active             Boolean   @default(true)
+  force_password_reset  Boolean   @default(false)
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+  deleted_at            DateTime?
+
+  password_reset_tokens PasswordResetToken[]
+  contractor_depts      ContractorDepartment[]
+  documents_created     Document[]             @relation("DocumentCreatedBy")
+  videos_created        Video[]                @relation("VideoCreatedBy")
+
+  @@map("users")
+}
+
+model PasswordResetToken {
+  id         String   @id @default(cuid())
+  token      String   @unique
+  is_used    Boolean  @default(false)
+  expires_at DateTime
+  created_at DateTime @default(now())
+
+  user_id String
+  user    User   @relation(fields: [user_id], references: [id])
+
+  @@map("password_reset_tokens")
+}
+
+// ─── Departments ──────────────────────────────────────────────────────────────
+
+model Department {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+  deleted_at  DateTime?
+
+  contractor_depts     ContractorDepartment[]
+  document_departments DocumentDepartment[]
+  video_departments    VideoDepartment[]
+
+  @@map("departments")
+}
+
+model ContractorDepartment {
+  contractor_id String
+  department_id String
+
+  contractor User       @relation(fields: [contractor_id], references: [id])
+  department Department @relation(fields: [department_id], references: [id])
+
+  @@id([contractor_id, department_id])
+  @@map("contractor_departments")
+}
+
+// ─── Categories ───────────────────────────────────────────────────────────────
+
+model Category {
+  id                 String    @id @default(cuid())
+  name               String
+  sort_order         Int       @default(0)
+  deleted_at         DateTime?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  parent_category_id String?
+  parent             Category?  @relation("CategoryHierarchy", fields: [parent_category_id], references: [id])
+  subcategories      Category[] @relation("CategoryHierarchy")
+
+  documents Document[]
+  videos    Video[]
+
+  @@map("categories")
+}
+
+// ─── Documents ────────────────────────────────────────────────────────────────
+
+model Document {
+  id          String        @id @default(cuid())
+  title       String
+  description String?
+  file_url    String
+  file_type   FileType
+  state       DocumentState @default(DRAFT)
+  access_type AccessType    @default(ALL)
+  deleted_at  DateTime?
+  created_at  DateTime      @default(now())
+  updated_at  DateTime      @updatedAt
+
+  category_id String?
+  category    Category? @relation(fields: [category_id], references: [id])
+
+  created_by_id String
+  created_by    User   @relation("DocumentCreatedBy", fields: [created_by_id], references: [id])
+
+  document_departments DocumentDepartment[]
+
+  @@map("documents")
+}
+
+model DocumentDepartment {
+  document_id   String
+  department_id String
+
+  document   Document   @relation(fields: [document_id], references: [id])
+  department Department @relation(fields: [department_id], references: [id])
+
+  @@id([document_id, department_id])
+  @@map("document_departments")
+}
+
+// ─── Videos ───────────────────────────────────────────────────────────────────
+
+model Video {
+  id            String       @id @default(cuid())
+  title         String
+  description   String?
+  blob_url      String
+  thumbnail_url String
+  upload_status UploadStatus @default(UPLOADING)
+  is_live       Boolean      @default(false)
+  access_type   AccessType   @default(ALL)
+  deleted_at    DateTime?
+  created_at    DateTime     @default(now())
+  updated_at    DateTime     @updatedAt
+
+  category_id String?
+  category    Category? @relation(fields: [category_id], references: [id])
+
+  created_by_id String
+  created_by    User   @relation("VideoCreatedBy", fields: [created_by_id], references: [id])
+
+  video_departments VideoDepartment[]
+
+  @@map("videos")
+}
+
+model VideoDepartment {
+  video_id      String
+  department_id String
+
+  video      Video      @relation(fields: [video_id], references: [id])
+  department Department @relation(fields: [department_id], references: [id])
+
+  @@id([video_id, department_id])
+  @@map("video_departments")
+}
+
+// ─── Logging ──────────────────────────────────────────────────────────────────
+// Stored in its own clearly-named table, separate from application tables.
+// No FK constraints: actors and targets may be soft-deleted but logs must remain.
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  actor_id    String
+  actor_role  Role
+  action_type String
+  target_type String?
+  target_id   String?
+  ip_address  String?
+  user_agent  String?
+  metadata    Json?
+  created_at  DateTime @default(now())
+
+  @@index([actor_id])
+  @@index([action_type])
+  @@index([created_at])
+  @@map("activity_logs")
+}

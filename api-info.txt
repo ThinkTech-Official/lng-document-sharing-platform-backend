@@ -1,0 +1,488 @@
+LNG Document Sharing Platform — API Reference
+===============================================
+
+Base URL : http://localhost:3000
+Auth     : Bearer JWT in Authorization header (except public endpoints)
+
+Role hierarchy  : SUPERADMIN > ADMIN > CONTRACTOR
+                  SUPERADMIN passes every role check automatically.
+                  Role labels below show the minimum role required.
+
+
+════════════════════════════════════════════════════════════════
+  AUTH  —  /auth
+════════════════════════════════════════════════════════════════
+
+POST /auth/login
+  Validates email and password, returns a signed JWT on success.
+  Generic error "Invalid email or password" for every failure
+  — email existence is never revealed.
+  Body   : { email: string, password: string }
+  Access : Public
+
+POST /auth/forgot-password
+  Generates a single-use password reset token (15-min TTL) and
+  sends a reset link to the address if it belongs to an active account.
+  Always returns success regardless of whether the email exists.
+  Body   : { email: string }
+  Access : Public
+
+POST /auth/reset-password
+  Validates the reset token, enforces password strength rules, hashes
+  the new password, marks the token used, and clears force_password_reset.
+  Password rules: min 8 chars, one uppercase, one digit, one special char.
+  Token is invalidated immediately on first use; expired tokens are rejected.
+  Body   : { token: string, new_password: string, confirm_password: string }
+  Access : Public
+
+PATCH /auth/change-password
+  Changes password for the currently authenticated user.
+  Used for the force_password_reset flow on first login.
+  Validates password strength and that both fields match,
+  then hashes and saves the new password and sets force_password_reset = false.
+  Body   : { new_password: string (min 8), confirm_password: string }
+  Access : Superadmin, Admin, Contractor (JWT required)
+
+POST /auth/logout
+  Stateless logout — records the event in the audit log and returns success.
+  Body   : none
+  Access : Any authenticated user (JWT required)
+
+
+════════════════════════════════════════════════════════════════
+  ADMINS  —  /admin
+════════════════════════════════════════════════════════════════
+
+POST /admin
+  Creates a new admin account. Auto-generates a secure temporary password,
+  hashes it, sets force_password_reset = true, and emails the credentials.
+  The temporary password is never returned in the response.
+  Body   : { name: string (min 2), email: string }
+  Access : Superadmin only
+
+GET /admin
+  Returns all non-deleted admin accounts ordered by creation date (desc).
+  Access : Superadmin only
+
+GET /admin/:id
+  Returns a single admin by ID. 404 if not found or soft-deleted.
+  Access : Superadmin only
+
+PATCH /admin/:id
+  Updates an admin's name and/or email. Rejects duplicate emails.
+  Body   : { name?: string, email?: string }
+  Access : Superadmin only
+
+PATCH /admin/:id/status
+  Activates or deactivates an admin account. Has no effect on contractors.
+  Body   : { is_active: boolean }
+  Access : Superadmin only
+
+DELETE /admin/:id
+  Soft-deletes an admin (sets deleted_at, sets is_active = false).
+  Access : Superadmin only
+
+
+════════════════════════════════════════════════════════════════
+  CONTRACTORS  —  /contractors
+════════════════════════════════════════════════════════════════
+
+POST /contractors
+  Creates a new contractor account. Auto-generates a temporary password,
+  sets force_password_reset = true, and emails the credentials.
+  Optionally assigns the contractor to one or more departments on creation.
+  Body   : { name: string (min 2), email: string, department_ids?: string[] }
+  Access : Admin, Superadmin
+
+GET /contractors
+  Returns all non-deleted contractors with their department assignments.
+  Body   : none
+  Access : Admin, Superadmin
+
+GET /contractors/:id
+  Returns a single contractor including department assignments.
+  404 if not found or soft-deleted.
+  Access : Admin, Superadmin
+
+PATCH /contractors/:id
+  Updates a contractor's name and/or email. Rejects duplicate emails.
+  Body   : { name?: string, email?: string }
+  Access : Admin, Superadmin
+
+PATCH /contractors/:id/status
+  Activates or deactivates a contractor. Has no effect on admins.
+  Body   : { is_active: boolean }
+  Access : Admin, Superadmin
+
+PATCH /contractors/:id/departments
+  Atomically replaces all department assignments for a contractor.
+  Validates that all supplied department IDs exist and are not soft-deleted.
+  Body   : { department_ids: string[] }
+  Access : Admin, Superadmin
+
+DELETE /contractors/:id
+  Soft-deletes a contractor (sets deleted_at, sets is_active = false).
+  Access : Admin, Superadmin
+
+
+════════════════════════════════════════════════════════════════
+  DEPARTMENTS  —  /departments
+════════════════════════════════════════════════════════════════
+
+POST /departments
+  Creates a new department. Name must be unique.
+  Body   : { name: string, description?: string }
+  Access : Admin, Superadmin
+
+GET /departments
+  Returns all non-deleted departments ordered by name ascending.
+  Access : Admin, Superadmin
+
+GET /departments/:id
+  Returns a single department by ID. 404 if not found or soft-deleted.
+  Access : Admin, Superadmin
+
+PATCH /departments/:id
+  Updates a department's name and/or description.
+  Rejects duplicate names.
+  Body   : { name?: string, description?: string }
+  Access : Admin, Superadmin
+
+DELETE /departments/:id
+  Soft-deletes a department. Blocked (409 Conflict) if the department has
+  any active contractors, any non-deleted restricted documents, or any
+  non-deleted restricted videos. All conflicts are returned at once.
+  This guard cannot be bypassed even by superadmin.
+  Access : Admin, Superadmin
+
+
+════════════════════════════════════════════════════════════════
+  CATEGORIES  —  /categories
+════════════════════════════════════════════════════════════════
+
+GET /categories/public
+  Returns all root categories with their active subcategories.
+  Intended for the contractor-facing homepage. Ordered by sort_order asc.
+  (Declared before /:id to prevent routing conflict.)
+  Access : Admin, Superadmin, Contractor
+
+POST /categories
+  Creates a root category or a subcategory.
+  Set parent_category_id to create a subcategory (max depth = 1;
+  subcategories cannot themselves be parents).
+  Body   : { name: string (min 2), parent_category_id?: string, sort_order?: number (default 0) }
+  Access : Admin, Superadmin
+
+GET /categories
+  Returns all root categories with their active subcategories.
+  Ordered by sort_order asc.
+  Access : Admin, Superadmin
+
+GET /categories/:id
+  Returns a single category or subcategory by ID.
+  Access : Admin, Superadmin
+
+PATCH /categories/:id
+  Updates a category's name and/or sort_order.
+  Body   : { name?: string, sort_order?: number }
+  Access : Admin, Superadmin
+
+DELETE /categories/:id
+  Soft-deletes a category. If it is a root category, all of its active
+  subcategories are also soft-deleted in the same transaction.
+  Deleting a subcategory does not affect its parent.
+  Documents and videos whose category is soft-deleted return category: null.
+  Access : Admin, Superadmin
+
+
+════════════════════════════════════════════════════════════════
+  DOCUMENTS  —  /documents
+════════════════════════════════════════════════════════════════
+
+POST /documents
+  Uploads a new document to Azure Blob Storage. Accepted MIME types:
+  PDF, DOC, DOCX, XLS, XLSX, JPG, PNG. Max file size: 50 MB.
+  Document starts in DRAFT state. For RESTRICTED access, department_ids
+  is required and validated (soft-deleted departments rejected).
+  Content-Type : multipart/form-data
+  Fields       : file (required), title, description?, category_id,
+                 access_type? (ALL | RESTRICTED), department_ids? (string[])
+  Access : Admin, Superadmin
+
+GET /documents
+  Lists documents. Admins see all states; contractors see only PUBLISHED
+  documents accessible to their department assignments.
+  RESTRICTED documents are filtered at the database query level.
+  Query  : { state? (DRAFT|PUBLISHED|UNPUBLISHED), category_id?, search? }
+           state filter is silently ignored for contractor role.
+  Access : Admin, Superadmin, Contractor
+
+GET /documents/:id
+  Returns a single document. Contractors are access-checked: document must
+  be PUBLISHED and either ALL or matching the contractor's departments.
+  Contractor views are logged as DOCUMENT_VIEWED on every call.
+  Access : Admin, Superadmin, Contractor
+
+PATCH /documents/:id
+  Updates a document's title, description, and/or category.
+  Does not change state or access settings.
+  Body   : { title?: string, description?: string, category_id?: string }
+  Access : Admin, Superadmin
+
+PATCH /documents/:id/reupload
+  Replaces the stored file with a new upload. Updates file_url and file_type.
+  Does not change the document state or department access.
+  Old blob remains in Azure Storage (no cleanup).
+  Content-Type : multipart/form-data
+  Fields       : file (required)
+  Access : Admin, Superadmin
+
+PATCH /documents/:id/status
+  Transitions the document state. Valid transitions only:
+    DRAFT → PUBLISHED
+    PUBLISHED → UNPUBLISHED
+    UNPUBLISHED → PUBLISHED
+  All other transitions return 400.
+  Body   : { state: "DRAFT" | "PUBLISHED" | "UNPUBLISHED" }
+  Access : Admin, Superadmin
+
+PATCH /documents/:id/departments
+  Atomically replaces the access_type and department list.
+  Switching to ALL deletes all rows in document_departments for the document.
+  Switching to RESTRICTED requires a non-empty department_ids array;
+  all IDs are validated and soft-deleted departments are rejected.
+  Body   : { access_type: "ALL" | "RESTRICTED", department_ids?: string[] }
+  Access : Admin, Superadmin
+
+DELETE /documents/:id
+  Soft-deletes a document (sets deleted_at). Blob is not deleted from Azure.
+  Access : Admin, Superadmin
+
+
+════════════════════════════════════════════════════════════════
+  VIDEOS  —  /videos
+════════════════════════════════════════════════════════════════
+
+POST /videos
+  Uploads a new video and thumbnail to Azure Blob Storage.
+  Both files are required — the request is rejected if either is missing.
+  Accepted video types: MP4 (video/mp4), MOV (video/quicktime),
+  AVI (video/x-msvideo). Max size: 2 GB.
+  Accepted thumbnail types: JPG, PNG.
+  Video is created with upload_status = UPLOADING, transitions to READY
+  on success or FAILED on error. blob_url is never returned in any response.
+  Content-Type : multipart/form-data
+  Fields       : video (required), thumbnail (required), title, description?,
+                 category_id, access_type? (ALL | RESTRICTED), department_ids?
+  Access : Admin, Superadmin
+
+GET /videos
+  Lists videos. Admins see all is_live states; contractors see only videos
+  where upload_status = READY and is_live = true, filtered by department access.
+  RESTRICTED videos are filtered at the database query level.
+  Query  : { is_live? (boolean), category_id?, search? }
+           is_live filter is silently ignored for contractor role.
+  Access : Admin, Superadmin, Contractor
+
+GET /videos/:id/stream
+  Returns a short-lived SAS URL (60-minute TTL, Content-Disposition: inline)
+  for streaming the video directly from Azure Blob Storage.
+  A new SAS URL is generated on every call — nothing is cached or stored.
+  blob_url is never exposed; only the time-limited SAS URL is returned.
+  Contractor stream requests are logged as VIDEO_STREAMED on every call.
+  (Declared before /:id to prevent routing conflict.)
+  Access : Admin, Superadmin, Contractor
+
+GET /videos/:id
+  Returns video metadata. blob_url is stripped from the response.
+  Contractors are access-checked: video must be READY, is_live = true,
+  and either ALL access or matching the contractor's department assignments.
+  Access : Admin, Superadmin, Contractor
+
+PATCH /videos/:id
+  Updates a video's title, description, and/or category.
+  Does not change upload_status, is_live, or access settings.
+  Body   : { title?: string, description?: string, category_id?: string }
+  Access : Admin, Superadmin
+
+PATCH /videos/:id/status
+  Sets is_live to true or false. Rejected with 400 if upload_status is not READY.
+  upload_status itself cannot be set via any endpoint.
+  Body   : { is_live: boolean }
+  Access : Admin, Superadmin
+
+PATCH /videos/:id/departments
+  Atomically replaces the access_type and department list.
+  Switching to ALL deletes all rows in video_departments for the video.
+  Switching to RESTRICTED requires a non-empty department_ids array;
+  all IDs are validated and soft-deleted departments are rejected.
+  Body   : { access_type: "ALL" | "RESTRICTED", department_ids?: string[] }
+  Access : Admin, Superadmin
+
+DELETE /videos/:id
+  Soft-deletes a video (sets deleted_at). Blob and thumbnail are not deleted.
+  Access : Admin, Superadmin
+
+
+════════════════════════════════════════════════════════════════
+  AUDIT LOGS  —  /logs
+════════════════════════════════════════════════════════════════
+
+GET /logs
+  Returns a paginated list of activity log entries with optional filters.
+  Cursor-based pagination: pass the created_at ISO string of the last item
+  as cursor to get the next page. Date range and cursor filters are merged
+  (not clobbered) so they can be combined safely.
+  Query  : {
+             actor_role?   : SUPERADMIN | ADMIN | CONTRACTOR
+             action_type?  : (see ActionType enum below)
+             target_type?  : string
+             actor_id?     : string
+             date_from?    : ISO 8601 datetime
+             date_to?      : ISO 8601 datetime
+             cursor?       : ISO 8601 datetime  (created_at of last seen item)
+             limit?        : integer 1–100 (default 50)
+           }
+  Returns: { data: ActivityLog[], nextCursor: string | null, hasNextPage: boolean }
+  Access : Superadmin only
+
+GET /logs/:id
+  Returns a single activity log entry by ID. 404 if not found.
+  Access : Superadmin only
+
+
+════════════════════════════════════════════════════════════════
+  ACTION TYPE ENUM  —  src/logging/enums/action-type.enum.ts
+════════════════════════════════════════════════════════════════
+
+Auth
+  AUTH_LOGIN_SUCCESS              Successful email + password login
+  AUTH_LOGOUT                     User called POST /auth/logout
+  AUTH_PASSWORD_RESET_REQUESTED   Forgot-password token generated and emailed
+  AUTH_PASSWORD_RESET_COMPLETED   Password successfully reset via token
+
+Admin
+  ADMIN_CREATED                   New admin account created
+  ADMIN_UPDATED                   Admin name or email updated
+  ADMIN_ACTIVATED                 Admin account activated
+  ADMIN_DEACTIVATED               Admin account deactivated
+  ADMIN_DELETED                   Admin account soft-deleted
+
+Contractor
+  CONTRACTOR_CREATED              New contractor account created
+  CONTRACTOR_UPDATED              Contractor name or email updated
+  CONTRACTOR_ACTIVATED            Contractor account activated
+  CONTRACTOR_DEACTIVATED          Contractor account deactivated
+  CONTRACTOR_DELETED              Contractor account soft-deleted
+  CONTRACTOR_DEPARTMENT_UPDATED   Contractor department assignments replaced
+
+Department
+  DEPARTMENT_CREATED              New department created
+  DEPARTMENT_UPDATED              Department name or description updated
+  DEPARTMENT_DELETED              Department soft-deleted
+
+Category
+  CATEGORY_CREATED                Category or subcategory created
+  CATEGORY_UPDATED                Category name or sort_order updated
+  CATEGORY_DELETED                Category (or subcategory) soft-deleted
+
+Document
+  DOCUMENT_CREATED                Document uploaded and record created
+  DOCUMENT_UPDATED                Document metadata updated
+  DOCUMENT_REUPLOADED             Document file replaced via reupload
+  DOCUMENT_STATUS_CHANGED         Document state transitioned
+  DOCUMENT_DEPARTMENT_UPDATED     Document access_type or departments replaced
+  DOCUMENT_DELETED                Document soft-deleted
+  DOCUMENT_VIEWED                 Contractor viewed a document (GET /documents/:id)
+
+Video
+  VIDEO_CREATED                   Video and thumbnail uploaded
+  VIDEO_UPDATED                   Video metadata updated
+  VIDEO_STATUS_CHANGED            Video is_live toggled
+  VIDEO_DEPARTMENT_UPDATED        Video access_type or departments replaced
+  VIDEO_DELETED                   Video soft-deleted
+  VIDEO_STREAMED                  Contractor requested a stream SAS URL
+
+
+════════════════════════════════════════════════════════════════
+  GLOBAL RULES AND NOTES
+════════════════════════════════════════════════════════════════
+
+Authentication
+  All protected routes require:  Authorization: Bearer <jwt_token>
+  JWT payload contains: { sub (user_id), role, force_password_reset }
+  JWT expiry: 24 hours. Secret from JWT_SECRET environment variable.
+  Soft-deleted users are rejected in the JWT strategy validate() step.
+  Inactive users (is_active = false) are rejected at the same step.
+
+force_password_reset
+  When an admin or contractor is created, force_password_reset = true.
+  The JwtAuthGuard throws 403 on every protected route for users with
+  force_password_reset = true. The only escape is POST /auth/reset-password
+  (public, no JWT required). On successful reset, the flag is set to false.
+  Superadmin is seeded with force_password_reset = false.
+
+Role Hierarchy
+  SUPERADMIN: passes every @Roles() check automatically (no bypass needed).
+  ADMIN: accesses all admin-labelled endpoints plus contractor-shared ones.
+  CONTRACTOR: accesses only explicitly opened read endpoints.
+  RolesGuard uses getAllAndOverride so method-level @Roles() overrides
+  class-level @Roles() on the same controller.
+
+Soft Delete
+  User, Department, Category, Document, and Video all use a deleted_at
+  DateTime? column. Records with a non-null deleted_at are excluded from
+  every findAll and findOne query throughout the application.
+  Hard deletes are never performed on application data.
+
+Department Deletion Guard
+  DELETE /departments/:id checks three counts in parallel:
+    • Active contractors assigned to the department
+    • Non-deleted restricted documents linked to the department
+    • Non-deleted restricted videos linked to the department
+  All conflicts are returned simultaneously in a single 409 response.
+  The guard runs at the service layer — it cannot be bypassed by any role,
+  including superadmin.
+
+Soft-Deleted Department Assignment
+  All endpoints that accept department_ids (contractor create/update,
+  document create/updateDepartments, video create/updateDepartments)
+  validate that every supplied ID exists AND has deleted_at = null.
+  Assigning a soft-deleted department returns 400.
+
+Category Depth Limit
+  Only one level of hierarchy is permitted: root → subcategory.
+  Attempting to set a subcategory as a parent returns 400.
+
+Logging — Fire-and-Forget
+  LoggingService.log() is synchronous from the caller's perspective.
+  It calls the async write internally and attaches .catch() to suppress
+  errors. A logging failure never crashes or delays the calling request.
+  LoggingModule is @Global() — no module needs to import it explicitly.
+
+IP Address and User-Agent Capture
+  RequestMetaInterceptor runs globally on every request.
+  It reads the x-forwarded-for header (first IP in the list) and falls
+  back to req.ip for direct connections. The result is stored as
+  req.requestMeta = { ip_address, user_agent }. All controllers pass
+  req.requestMeta directly to service log calls, which spread it into
+  LogActionParams. ip_address and user_agent are persisted on every
+  activity log row.
+
+Log Archiving
+  A @Cron('0 2 * * *') job runs at 02:00 daily.
+  It fetches all activity_logs older than 30 days, gzip-compresses them
+  as JSON, uploads the archive to the Azure Blob "logs-archive" container,
+  and only then deletes the rows from the database.
+  If the upload fails, the rows are retained for the next day's retry.
+
+Azure Blob — Lazy Initialisation
+  AzureBlobService, AzureVideoService, and LoggingArchiveService all use
+  a lazy getter for BlobServiceClient. The client is not constructed until
+  the first actual file operation, so the application starts successfully
+  even when AZURE_STORAGE_CONNECTION_STRING holds a placeholder value.
+
+Video blob_url
+  blob_url is fetched internally for SAS generation but is stripped in
+  every toResponse() call and never appears in any API response.
+  Clients receive only the time-limited SAS URL from GET /videos/:id/stream.
