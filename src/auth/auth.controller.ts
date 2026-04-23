@@ -30,10 +30,11 @@ export class AuthController {
       this.meta(req),
     );
 
+    const isProd = process.env.NODE_ENV === 'production';
     res.cookie(COOKIE_NAME, access_token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: COOKIE_MAX_AGE,
     });
 
@@ -70,10 +71,11 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
+    const isProd = process.env.NODE_ENV === 'production';
     res.clearCookie(COOKIE_NAME, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
     });
 
     return this.authService.logout(actor, this.meta(req));
