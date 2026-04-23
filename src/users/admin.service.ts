@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
@@ -35,6 +36,8 @@ const adminSelect = {
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(
     private prisma: PrismaService,
     private logging: LoggingService,
@@ -61,12 +64,9 @@ export class AdminService {
       select: adminSelect,
     });
 
-    await this.mailService.sendTempPassword(
-      admin.email,
-      admin.name,
-      tempPassword,
-      'Your Admin Account Has Been Created',
-    );
+    this.mailService
+      .sendTempPassword(admin.email, admin.name, tempPassword, 'Your Admin Account Has Been Created')
+      .catch((err) => this.logger.error(`Failed to send welcome email to ${admin.email}`, err));
 
     await this.logging.log({
       actor_id: actor.id,

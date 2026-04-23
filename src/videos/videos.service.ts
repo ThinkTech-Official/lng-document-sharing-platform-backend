@@ -5,10 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AccessType, Role, UploadStatus } from '@prisma/client';
+import * as crypto from 'crypto';
+import * as path from 'path';
+import { AzureStorageService } from '../azure/azure-storage.service';
 import { LoggingService } from '../logging/logging.service';
 import { ActionType } from '../logging/enums/action-type.enum';
 import { PrismaService } from '../prisma/prisma.service';
-import { AzureVideoService } from './azure-video.service';
 import { CreateVideoDto } from './dto/create-video.dto';
 import { ListVideosDto } from './dto/list-videos.dto';
 import { UpdateVideoDepartmentsDto } from './dto/update-video-departments.dto';
@@ -28,7 +30,7 @@ interface RequestMeta {
   user_agent?: string;
 }
 
-// blob_url included here for internal use (SAS generation); stripped in toResponse()
+// blob_url and thumbnail_url included for internal SAS generation; stripped in toResponse()
 const videoSelect = {
   id: true,
   title: true,
@@ -53,9 +55,13 @@ const videoSelect = {
 
 @Injectable()
 export class VideosService {
+  private readonly videoContainer = process.env.AZURE_CONTAINER_VIDEOS!;
+  private readonly thumbnailContainer =
+    process.env.AZURE_CONTAINER_THUMBNAILS ?? 'thumbnails';
+
   constructor(
     private prisma: PrismaService,
-    private azure: AzureVideoService,
+    private azure: AzureStorageService,
     private logging: LoggingService,
   ) {}
 
@@ -78,7 +84,6 @@ export class VideosService {
       await this.validateDepartments(dto.department_ids);
     }
 
-    // Create record immediately with UPLOADING status
     const video = await this.prisma.video.create({
       data: {
         title: dto.title,
@@ -102,16 +107,20 @@ export class VideosService {
     });
 
     try {
-      // Upload video and thumbnail in parallel
+      const videoBlobName = `${crypto.randomUUID()}${path.extname(files.video.originalname)}`;
+      const thumbnailBlobName = `${crypto.randomUUID()}${path.extname(files.thumbnail.originalname)}`;
+
       const [blob_url, thumbnail_url] = await Promise.all([
-        this.azure.uploadVideo(
+        this.azure.uploadFile(
+          this.videoContainer,
+          videoBlobName,
           files.video.buffer,
-          files.video.originalname,
           files.video.mimetype,
         ),
-        this.azure.uploadThumbnail(
+        this.azure.uploadFile(
+          this.thumbnailContainer,
+          thumbnailBlobName,
           files.thumbnail.buffer,
-          files.thumbnail.originalname,
           files.thumbnail.mimetype,
         ),
       ]);
@@ -131,9 +140,9 @@ export class VideosService {
         ...meta,
       });
 
-      return this.toResponse(ready);
+      const thumbnailSasUrl = await this.getThumbnailSasUrl(thumbnail_url);
+      return this.toResponse(ready, thumbnailSasUrl);
     } catch (err) {
-      // Mark as failed but do not swallow the error
       await this.prisma.video.update({
         where: { id: video.id },
         data: { upload_status: UploadStatus.FAILED },
@@ -182,7 +191,12 @@ export class VideosService {
       orderBy: { created_at: 'desc' },
     });
 
-    return videos.map((v) => this.toResponse(v));
+    return Promise.all(
+      videos.map(async (v) => {
+        const thumbnailSasUrl = await this.getThumbnailSasUrl(v.thumbnail_url);
+        return this.toResponse(v, thumbnailSasUrl);
+      }),
+    );
   }
 
   async findOne(id: string, actor: Actor, meta: RequestMeta = {}) {
@@ -197,7 +211,8 @@ export class VideosService {
       await this.assertContractorAccess(video, actor.id);
     }
 
-    return this.toResponse(video);
+    const thumbnailSasUrl = await this.getThumbnailSasUrl(video.thumbnail_url);
+    return this.toResponse(video, thumbnailSasUrl);
   }
 
   async stream(id: string, actor: Actor, meta: RequestMeta = {}) {
@@ -220,8 +235,13 @@ export class VideosService {
       });
     }
 
-    // blob_url never leaves the server — only the SAS URL is returned
-    const stream_url = await this.azure.generateStreamUrl(video.blob_url);
+    const blobName = this.azure.extractBlobName(video.blob_url, this.videoContainer);
+    const stream_url = await this.azure.generateSasUrl(
+      this.videoContainer,
+      blobName,
+      60,
+      true,
+    );
     return { stream_url };
   }
 
@@ -252,7 +272,8 @@ export class VideosService {
       ...meta,
     });
 
-    return this.toResponse(updated);
+    const thumbnailSasUrl = await this.getThumbnailSasUrl(updated.thumbnail_url);
+    return this.toResponse(updated, thumbnailSasUrl);
   }
 
   async updateStatus(
@@ -282,7 +303,8 @@ export class VideosService {
       ...meta,
     });
 
-    return this.toResponse(updated);
+    const thumbnailSasUrl = await this.getThumbnailSasUrl(updated.thumbnail_url);
+    return this.toResponse(updated, thumbnailSasUrl);
   }
 
   async updateDepartments(
@@ -331,7 +353,8 @@ export class VideosService {
       where: { id },
       select: videoSelect,
     });
-    return this.toResponse(updated!);
+    const thumbnailSasUrl = await this.getThumbnailSasUrl(updated!.thumbnail_url);
+    return this.toResponse(updated!, thumbnailSasUrl);
   }
 
   async remove(id: string, actor: Actor, meta: RequestMeta = {}) {
@@ -417,12 +440,23 @@ export class VideosService {
     if (!hasAccess) throw new ForbiddenException('Video not accessible');
   }
 
-  // Strips blob_url and resolves soft-deleted category to null
-  private toResponse(video: any) {
-    const { blob_url, deleted_at: _del, category, ...rest } = video;
+  private async getThumbnailSasUrl(thumbnailUrl: string): Promise<string | undefined> {
+    if (!thumbnailUrl) return undefined;
+    try {
+      const blobName = this.azure.extractBlobName(thumbnailUrl, this.thumbnailContainer);
+      return await this.azure.generateSasUrl(this.thumbnailContainer, blobName, 60, true);
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Strips blob_url, thumbnail_url, deleted_at; resolves soft-deleted category to null
+  private toResponse(video: any, thumbnailSasUrl?: string) {
+    const { blob_url, thumbnail_url, deleted_at: _del, category, ...rest } = video;
     const { deleted_at: catDel, ...cat } = category ?? {};
     return {
       ...rest,
+      ...(thumbnailSasUrl !== undefined && { thumbnail_sas_url: thumbnailSasUrl }),
       category: category && !catDel ? { id: cat.id, name: cat.name } : null,
     };
   }

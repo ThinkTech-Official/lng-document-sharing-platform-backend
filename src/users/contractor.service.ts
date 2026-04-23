@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
@@ -42,6 +43,8 @@ const contractorSelect = {
 
 @Injectable()
 export class ContractorService {
+  private readonly logger = new Logger(ContractorService.name);
+
   constructor(
     private prisma: PrismaService,
     private logging: LoggingService,
@@ -89,12 +92,9 @@ export class ContractorService {
       select: contractorSelect,
     });
 
-    await this.mailService.sendTempPassword(
-      contractor.email,
-      contractor.name,
-      tempPassword,
-      'Your Contractor Account Has Been Created',
-    );
+    this.mailService
+      .sendTempPassword(contractor.email, contractor.name, tempPassword, 'Your Contractor Account Has Been Created')
+      .catch((err) => this.logger.error(`Failed to send welcome email to ${contractor.email}`, err));
 
     await this.logging.log({
       actor_id: actor.id,

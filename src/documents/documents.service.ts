@@ -5,10 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AccessType, DocumentState, FileType, Role } from '@prisma/client';
+import * as crypto from 'crypto';
+import * as path from 'path';
+import { AzureStorageService } from '../azure/azure-storage.service';
 import { LoggingService } from '../logging/logging.service';
 import { ActionType } from '../logging/enums/action-type.enum';
 import { PrismaService } from '../prisma/prisma.service';
-import { AzureBlobService } from './azure-blob.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { ListDocumentsDto } from './dto/list-documents.dto';
 import { UpdateDocumentDepartmentsDto } from './dto/update-document-departments.dto';
@@ -65,9 +67,11 @@ const documentSelect = {
 
 @Injectable()
 export class DocumentsService {
+  private readonly container = process.env.AZURE_CONTAINER_DOCUMENTS!;
+
   constructor(
     private prisma: PrismaService,
-    private blob: AzureBlobService,
+    private azure: AzureStorageService,
     private logging: LoggingService,
   ) {}
 
@@ -89,9 +93,11 @@ export class DocumentsService {
       await this.validateDepartments(dto.department_ids);
     }
 
-    const file_url = await this.blob.upload(
+    const blobName = `${crypto.randomUUID()}-${Date.now()}-${this.sanitizeFilename(file.originalname)}`;
+    const file_url = await this.azure.uploadFile(
+      this.container,
+      blobName,
       file.buffer,
-      file.originalname,
       file.mimetype,
     );
 
@@ -190,7 +196,9 @@ export class DocumentsService {
       });
     }
 
-    return this.toResponse(document);
+    const blobName = this.azure.extractBlobName(document.file_url, this.container);
+    const sasUrl = await this.azure.generateSasUrl(this.container, blobName, 60, true);
+    return this.toResponse(document, sasUrl);
   }
 
   async update(
@@ -232,9 +240,11 @@ export class DocumentsService {
     await this.findExisting(id);
     const fileType = this.resolveFileType(file.mimetype);
 
-    const file_url = await this.blob.upload(
+    const blobName = `${crypto.randomUUID()}-${Date.now()}-${this.sanitizeFilename(file.originalname)}`;
+    const file_url = await this.azure.uploadFile(
+      this.container,
+      blobName,
       file.buffer,
-      file.originalname,
       file.mimetype,
     );
 
@@ -253,7 +263,8 @@ export class DocumentsService {
       ...meta,
     });
 
-    return this.toResponse(updated);
+    const sasUrl = await this.azure.generateSasUrl(this.container, blobName, 60, true);
+    return this.toResponse(updated, sasUrl);
   }
 
   async updateStatus(
@@ -370,6 +381,10 @@ export class DocumentsService {
     return fileType;
   }
 
+  private sanitizeFilename(originalName: string): string {
+    return path.basename(originalName).replace(/[^a-zA-Z0-9._-]/g, '-');
+  }
+
   private async findExisting(id: string) {
     const document = await this.prisma.document.findFirst({
       where: { id, deleted_at: null },
@@ -415,13 +430,14 @@ export class DocumentsService {
     if (!hasAccess) throw new ForbiddenException('Document not accessible');
   }
 
-  // Strips deleted_at from category and returns null if category is soft-deleted
-  private toResponse(document: any) {
-    const { deleted_at, ...cat } = document.category ?? {};
+  private toResponse(document: any, sasUrl?: string) {
+    const { file_url, ...docWithoutUrl } = document;
+    const { deleted_at, ...cat } = docWithoutUrl.category ?? {};
     return {
-      ...document,
+      ...docWithoutUrl,
+      ...(sasUrl !== undefined && { document_url: sasUrl }),
       category:
-        document.category && !deleted_at
+        docWithoutUrl.category && !deleted_at
           ? { id: cat.id, name: cat.name }
           : null,
     };

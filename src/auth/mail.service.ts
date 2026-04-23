@@ -11,6 +11,8 @@ export class MailService {
       host: process.env.MAIL_HOST,
       port: Number(process.env.MAIL_PORT) || 587,
       secure: process.env.MAIL_SECURE === 'true',
+      // requireTLS forces STARTTLS on port 587 (required by Mailtrap sandbox)
+      requireTLS: process.env.MAIL_SECURE !== 'true',
       auth: {
         user: process.env.MAIL_USER,
         pass: process.env.MAIL_PASS,
@@ -44,7 +46,7 @@ export class MailService {
     tempPassword: string,
     subject: string = 'Your LNG Platform Account Has Been Created',
   ): Promise<void> {
-    const resetUrl = `${process.env.APP_URL}/auth/forgot-password`;
+    const resetUrl = `${process.env.APP_URL}/auth/change-password`;
     await this.transporter.sendMail({
       from: this.from,
       to,
@@ -54,8 +56,8 @@ export class MailService {
         <p>Your account has been created on the LNG Document Sharing Platform.</p>
         <p><strong>Email:</strong> ${to}</p>
         <p><strong>Temporary Password:</strong> ${tempPassword}</p>
-        <p>For security, you must reset your password before you can access the platform.</p>
-        <p>Use the link below to request a password reset link:</p>
+        <p>For security, you must change your password on first login.</p>
+        <p>Login and use this endpoint to set a new password:</p>
         <p><a href="${resetUrl}">${resetUrl}</a></p>
         <p>If you did not expect this email, please contact your administrator.</p>
       `,

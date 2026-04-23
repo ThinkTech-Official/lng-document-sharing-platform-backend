@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { BlobServiceClient } from '@azure/storage-blob';
+import { AzureStorageService } from '../azure/azure-storage.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { gzip } from 'zlib';
 import { promisify } from 'util';
@@ -12,18 +12,11 @@ const RETENTION_DAYS = 30;
 export class LoggingArchiveService {
   private readonly logger = new Logger(LoggingArchiveService.name);
   private readonly container = process.env.AZURE_CONTAINER_LOGS_ARCHIVE ?? 'logs-archive';
-  private _blobClient: BlobServiceClient | undefined;
 
-  constructor(private prisma: PrismaService) {}
-
-  private get blobClient(): BlobServiceClient {
-    if (!this._blobClient) {
-      const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING;
-      if (!connStr) throw new Error('AZURE_STORAGE_CONNECTION_STRING is not set');
-      this._blobClient = BlobServiceClient.fromConnectionString(connStr);
-    }
-    return this._blobClient;
-  }
+  constructor(
+    private prisma: PrismaService,
+    private azure: AzureStorageService,
+  ) {}
 
   @Cron('0 2 * * *') // 2 AM daily
   async archiveOldLogs(): Promise<void> {
@@ -50,16 +43,9 @@ export class LoggingArchiveService {
         Buffer.from(JSON.stringify(logs, null, 0)),
       );
 
-      const containerClient = this.blobClient.getContainerClient(this.container);
-      const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+      await this.azure.uploadFile(this.container, blobName, compressed, 'application/gzip');
 
-      await blockBlobClient.upload(compressed, compressed.length, {
-        blobHTTPHeaders: { blobContentType: 'application/gzip' },
-      });
-
-      this.logger.log(
-        `Archived ${logs.length} logs to ${blobName}`,
-      );
+      this.logger.log(`Archived ${logs.length} logs to ${blobName}`);
 
       // Only delete from DB after confirmed upload
       const ids = logs.map((l) => l.id);
