@@ -55,7 +55,21 @@ const documentSelect = {
   access_type: true,
   created_at: true,
   updated_at: true,
-  category: { select: { id: true, name: true, deleted_at: true } },
+  category: {
+    select: {
+      id: true,
+      name: true,
+      parent_category_id: true,
+      deleted_at: true,
+      parent: {
+        select: {
+          id: true,
+          name: true,
+          deleted_at: true,
+        },
+      },
+    },
+  },
   created_by: { select: { id: true, name: true, email: true } },
   document_departments: {
     select: {
@@ -81,6 +95,10 @@ export class DocumentsService {
     actor: Actor,
     meta: RequestMeta = {},
   ) {
+    console.log('=== DOCUMENT CREATE DTO ===');
+    console.log('access_type:', dto.access_type);
+    console.log('department_ids:', dto.department_ids);
+    console.log('===========================');
     const fileType = this.resolveFileType(file.mimetype);
     await this.assertCategoryExists(dto.category_id);
 
@@ -137,35 +155,61 @@ export class DocumentsService {
   async findAll(actor: Actor, query: ListDocumentsDto) {
     const isContractor = actor.role === Role.CONTRACTOR;
 
-    const where: any = {
-      deleted_at: null,
-      ...(isContractor
-        ? {
-            state: DocumentState.PUBLISHED,
-            OR: [
-              { access_type: AccessType.ALL },
-              {
-                access_type: AccessType.RESTRICTED,
-                document_departments: {
-                  some: {
-                    department: {
-                      contractor_depts: {
-                        some: { contractor_id: actor.id },
-                      },
-                    },
-                  },
+    // Schema relation names used below:
+    //   Document.document_departments       → DocumentDepartment[] (junction)
+    //   DocumentDepartment.department_id    → FK field
+    //   ContractorDepartment (prisma model) → contractor_id FK field
+    let where: any;
+
+    if (isContractor) {
+      // Pre-fetch this contractor's assigned department IDs.
+      // A direct IN-list check is used instead of nested Prisma relation
+      // traversal (document → dept → contractor_dept → contractor_id)
+      // because the nested approach does not filter correctly and causes
+      // contractors to see RESTRICTED documents from other departments.
+      const contractorDepts = await this.prisma.contractorDepartment.findMany({
+        where: { contractor_id: actor.id },
+        select: { department_id: true },
+      });
+      const contractorDepartmentIds = contractorDepts.map((d) => d.department_id);
+
+      if (contractorDepartmentIds.length === 0) {
+        // No department assignments → only ALL-access published documents visible
+        where = {
+          deleted_at: null,
+          state: DocumentState.PUBLISHED,
+          access_type: AccessType.ALL,
+        };
+      } else {
+        // Contractor can see: published ALL documents OR published RESTRICTED
+        // documents where at least one document department matches their own.
+        where = {
+          deleted_at: null,
+          state: DocumentState.PUBLISHED,
+          OR: [
+            { access_type: AccessType.ALL },
+            {
+              access_type: AccessType.RESTRICTED,
+              document_departments: {
+                some: {
+                  department_id: { in: contractorDepartmentIds },
                 },
               },
-            ],
-          }
-        : {
-            ...(query.state && { state: query.state }),
-          }),
-      ...(query.category_id && { category_id: query.category_id }),
-      ...(query.search && {
-        title: { contains: query.search, mode: 'insensitive' },
-      }),
-    };
+            },
+          ],
+        };
+      }
+    } else {
+      where = {
+        deleted_at: null,
+        ...(query.state && { state: query.state }),
+      };
+    }
+
+    if (query.category_id) where.category_id = query.category_id;
+    if (query.search) {
+      where.title = { contains: query.search, mode: 'insensitive' };
+    }
 
     const documents = await this.prisma.document.findMany({
       where,
@@ -417,29 +461,50 @@ export class DocumentsService {
     if (document.state !== DocumentState.PUBLISHED) {
       throw new ForbiddenException('Document not accessible');
     }
+
     if (document.access_type === AccessType.ALL) return;
 
     const contractorDepts = await this.prisma.contractorDepartment.findMany({
       where: { contractor_id: contractorId },
       select: { department_id: true },
     });
-    const deptIds = new Set(contractorDepts.map((d) => d.department_id));
-    const hasAccess = document.document_departments.some((dd: any) =>
-      deptIds.has(dd.department_id),
-    );
-    if (!hasAccess) throw new ForbiddenException('Document not accessible');
+    const contractorDepartmentIds = contractorDepts.map((d) => d.department_id);
+
+    const hasAccess =
+      contractorDepartmentIds.length > 0 &&
+      document.document_departments.some((dd: any) =>
+        contractorDepartmentIds.includes(dd.department_id),
+      );
+
+    if (!hasAccess) throw new ForbiddenException('You do not have access to this document');
   }
 
   private toResponse(document: any, sasUrl?: string) {
     const { file_url, ...docWithoutUrl } = document;
-    const { deleted_at, ...cat } = docWithoutUrl.category ?? {};
+    const raw = docWithoutUrl.category;
+    let category: {
+      id: string;
+      name: string;
+      parent_category_id: string | null;
+      parent: { id: string; name: string } | null;
+    } | null = null;
+
+    if (raw && !raw.deleted_at) {
+      category = {
+        id: raw.id,
+        name: raw.name,
+        parent_category_id: raw.parent_category_id ?? null,
+        parent:
+          raw.parent && !raw.parent.deleted_at
+            ? { id: raw.parent.id, name: raw.parent.name }
+            : null,
+      };
+    }
+
     return {
       ...docWithoutUrl,
       ...(sasUrl !== undefined && { document_url: sasUrl }),
-      category:
-        docWithoutUrl.category && !deleted_at
-          ? { id: cat.id, name: cat.name }
-          : null,
+      category,
     };
   }
 }

@@ -22,9 +22,13 @@ export class CreateDocumentDto {
 
   @IsOptional()
   @IsEnum(AccessType)
+  @Transform(({ value }) => {
+    if (!value) return undefined;
+    return value.toString().toUpperCase();
+  })
   access_type?: AccessType;
 
-  // Multipart form sends arrays as repeated keys or JSON strings
+  // Multipart form sends arrays as repeated keys, JSON strings, or comma-separated strings
   @IsOptional()
   @Transform(({ value }) => {
     if (!value) return [];
@@ -33,6 +37,12 @@ export class CreateDocumentDto {
       const parsed = JSON.parse(value);
       return Array.isArray(parsed) ? parsed : [parsed];
     } catch {
+      if (typeof value === 'string') {
+        return value
+          .split(',')
+          .map((v: string) => v.trim())
+          .filter(Boolean);
+      }
       return [value];
     }
   })

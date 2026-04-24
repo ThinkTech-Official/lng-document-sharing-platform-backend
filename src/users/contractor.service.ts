@@ -52,6 +52,14 @@ export class ContractorService {
     private mailService: MailService,
   ) {}
 
+  private toContractorResponse(contractor: any) {
+    const { contractor_depts, ...rest } = contractor;
+    return {
+      ...rest,
+      departments: (contractor_depts ?? []).map((cd: any) => cd.department),
+    };
+  }
+
   private async validateDepartments(ids: string[]): Promise<void> {
     if (!ids.length) return;
     const found = await this.prisma.department.findMany({
@@ -105,15 +113,16 @@ export class ContractorService {
       ...meta,
     });
 
-    return contractor;
+    return this.toContractorResponse(contractor);
   }
 
   async findAll() {
-    return this.prisma.user.findMany({
+    const contractors = await this.prisma.user.findMany({
       where: { role: Role.CONTRACTOR, deleted_at: null },
       select: contractorSelect,
       orderBy: { created_at: 'desc' },
     });
+    return contractors.map((c) => this.toContractorResponse(c));
   }
 
   async findOne(id: string) {
@@ -122,7 +131,7 @@ export class ContractorService {
       select: contractorSelect,
     });
     if (!contractor) throw new NotFoundException('Contractor not found');
-    return contractor;
+    return this.toContractorResponse(contractor);
   }
 
   async update(
@@ -155,7 +164,7 @@ export class ContractorService {
       ...meta,
     });
 
-    return updated;
+    return this.toContractorResponse(updated);
   }
 
   async updateStatus(
@@ -183,7 +192,7 @@ export class ContractorService {
       ...meta,
     });
 
-    return updated;
+    return this.toContractorResponse(updated);
   }
 
   async updateDepartments(
