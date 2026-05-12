@@ -8,6 +8,7 @@ import { AccessType, Role, UploadStatus } from '@prisma/client';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import { AzureStorageService } from '../azure/azure-storage.service';
+import { paginate } from '../common/helpers/paginate.helper';
 import { LoggingService } from '../logging/logging.service';
 import { ActionType } from '../logging/enums/action-type.enum';
 import { PrismaService } from '../prisma/prisma.service';
@@ -23,6 +24,8 @@ const ALLOWED_THUMBNAIL_MIMES = ['image/jpeg', 'image/png'];
 interface Actor {
   id: string;
   role: Role;
+  name?: string;
+  email?: string;
 }
 
 interface RequestMeta {
@@ -134,6 +137,8 @@ export class VideosService {
       await this.logging.log({
         actor_id: actor.id,
         actor_role: actor.role,
+        actor_name: actor.name,
+        actor_email: actor.email,
         action_type: ActionType.VIDEO_CREATED,
         target_type: 'Video',
         target_id: video.id,
@@ -153,6 +158,9 @@ export class VideosService {
 
   async findAll(actor: Actor, query: ListVideosDto) {
     const isContractor = actor.role === Role.CONTRACTOR;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
 
     const where: any = {
       deleted_at: null,
@@ -178,6 +186,8 @@ export class VideosService {
           }
         : {
             ...(query.is_live !== undefined && { is_live: query.is_live }),
+            ...(query.upload_status && { upload_status: query.upload_status }),
+            ...(query.department_access && { access_type: query.department_access }),
           }),
       ...(query.category_id && { category_id: query.category_id }),
       ...(query.search && {
@@ -185,18 +195,25 @@ export class VideosService {
       }),
     };
 
-    const videos = await this.prisma.video.findMany({
-      where,
-      select: videoSelect,
-      orderBy: { created_at: 'desc' },
-    });
+    const [videos, total] = await this.prisma.$transaction([
+      this.prisma.video.findMany({
+        where,
+        select: videoSelect,
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.video.count({ where }),
+    ]);
 
-    return Promise.all(
+    const data = await Promise.all(
       videos.map(async (v) => {
         const thumbnailSasUrl = await this.getThumbnailSasUrl(v.thumbnail_url);
         return this.toResponse(v, thumbnailSasUrl);
       }),
     );
+
+    return paginate(data, total, page, limit);
   }
 
   async findOne(id: string, actor: Actor, meta: RequestMeta = {}) {
@@ -228,6 +245,8 @@ export class VideosService {
       await this.logging.log({
         actor_id: actor.id,
         actor_role: actor.role,
+        actor_name: actor.name,
+        actor_email: actor.email,
         action_type: ActionType.VIDEO_STREAMED,
         target_type: 'Video',
         target_id: id,
@@ -266,6 +285,8 @@ export class VideosService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.VIDEO_UPDATED,
       target_type: 'Video',
       target_id: id,
@@ -297,6 +318,8 @@ export class VideosService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.VIDEO_STATUS_CHANGED,
       target_type: 'Video',
       target_id: id,
@@ -343,6 +366,8 @@ export class VideosService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.VIDEO_DEPARTMENT_UPDATED,
       target_type: 'Video',
       target_id: id,
@@ -368,6 +393,8 @@ export class VideosService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.VIDEO_DELETED,
       target_type: 'Video',
       target_id: id,

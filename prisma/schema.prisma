@@ -202,6 +202,8 @@ model ActivityLog {
   id          String   @id @default(cuid())
   actor_id    String
   actor_role  Role
+  actor_name  String?
+  actor_email String?
   action_type String
   target_type String?
   target_id   String?

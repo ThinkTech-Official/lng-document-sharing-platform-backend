@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { DepartmentsService } from './departments.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
+import { ListDepartmentsDto } from './dto/list-departments.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import type { Request } from 'express';
 
@@ -39,8 +41,8 @@ export class DepartmentsController {
   }
 
   @Get()
-  findAll() {
-    return this.departmentsService.findAll();
+  findAll(@Query() query: ListDepartmentsDto) {
+    return this.departmentsService.findAll(query);
   }
 
   @Get(':id')

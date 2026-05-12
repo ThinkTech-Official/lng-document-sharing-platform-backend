@@ -6,13 +6,17 @@ import {
 import { AccessType, Role } from '@prisma/client';
 import { LoggingService } from '../logging/logging.service';
 import { ActionType } from '../logging/enums/action-type.enum';
+import { paginate } from '../common/helpers/paginate.helper';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
+import { ListDepartmentsDto } from './dto/list-departments.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 
 interface Actor {
   id: string;
   role: Role;
+  name?: string;
+  email?: string;
 }
 
 interface RequestMeta {
@@ -49,6 +53,8 @@ export class DepartmentsService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.DEPARTMENT_CREATED,
       target_type: 'Department',
       target_id: department.id,
@@ -58,12 +64,28 @@ export class DepartmentsService {
     return department;
   }
 
-  async findAll() {
-    return this.prisma.department.findMany({
-      where: { deleted_at: null },
-      select: departmentSelect,
-      orderBy: { name: 'asc' },
-    });
+  async findAll(query: ListDepartmentsDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = { deleted_at: null };
+    if (query.search) {
+      where.name = { contains: query.search, mode: 'insensitive' };
+    }
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.department.findMany({
+        where,
+        select: departmentSelect,
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.department.count({ where }),
+    ]);
+
+    return paginate(data, total, page, limit);
   }
 
   async findOne(id: string) {
@@ -99,6 +121,8 @@ export class DepartmentsService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.DEPARTMENT_UPDATED,
       target_type: 'Department',
       target_id: id,
@@ -120,6 +144,8 @@ export class DepartmentsService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.DEPARTMENT_DELETED,
       target_type: 'Department',
       target_id: id,

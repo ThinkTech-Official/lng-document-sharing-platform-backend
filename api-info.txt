@@ -2,7 +2,11 @@ LNG Document Sharing Platform — API Reference
 ===============================================
 
 Base URL : http://localhost:3000
-Auth     : Bearer JWT in Authorization header (except public endpoints)
+Auth     : HttpOnly cookie named lng_token
+           Set automatically by POST /auth/login
+           Cleared automatically by POST /auth/logout
+           withCredentials: true required on all frontend requests
+           (except public endpoints which require no cookie)
 
 Role hierarchy  : SUPERADMIN > ADMIN > CONTRACTOR
                   SUPERADMIN passes every role check automatically.
@@ -61,7 +65,9 @@ POST /admin
   Access : Superadmin only
 
 GET /admin
-  Returns all non-deleted admin accounts ordered by creation date (desc).
+  Returns a paginated list of non-deleted admin accounts ordered by creation date (desc).
+  Query  : { page? (default 1), limit? (default 20, max 100), search? (name or email, case-insensitive) }
+  Returns: PaginatedResponse<Admin>  — { data: Admin[], meta: { total, page, limit, totalPages, hasNextPage, hasPrevPage } }
   Access : Superadmin only
 
 GET /admin/:id
@@ -95,8 +101,10 @@ POST /contractors
   Access : Admin, Superadmin
 
 GET /contractors
-  Returns all non-deleted contractors with their department assignments.
-  Body   : none
+  Returns a paginated list of non-deleted contractors with their department assignments.
+  Query  : { page? (default 1), limit? (default 20, max 100), search? (name or email),
+             is_active? (true|false), department_id? (filter by department UUID) }
+  Returns: PaginatedResponse<Contractor>
   Access : Admin, Superadmin
 
 GET /contractors/:id
@@ -135,7 +143,9 @@ POST /departments
   Access : Admin, Superadmin
 
 GET /departments
-  Returns all non-deleted departments ordered by name ascending.
+  Returns a paginated list of non-deleted departments ordered by name ascending.
+  Query  : { page? (default 1), limit? (default 20, max 100), search? (name, case-insensitive) }
+  Returns: PaginatedResponse<Department>
   Access : Admin, Superadmin
 
 GET /departments/:id
@@ -174,7 +184,11 @@ POST /categories
   Access : Admin, Superadmin
 
 GET /categories
-  Returns all root categories with their active subcategories.
+  Returns a paginated list of root categories with their active subcategories inline.
+  Pagination applies to root categories only; subcategories are always included in full.
+  Search matches root category name OR any subcategory name (returns the parent root in that case).
+  Query  : { page? (default 1), limit? (default 20, max 100), search? (root or subcategory name) }
+  Returns: PaginatedResponse<Category>  — each item includes subcategories[]
   Ordered by sort_order asc.
   Access : Admin, Superadmin
 
@@ -210,11 +224,14 @@ POST /documents
   Access : Admin, Superadmin
 
 GET /documents
-  Lists documents. Admins see all states; contractors see only PUBLISHED
+  Returns a paginated list of documents. Admins see all states; contractors see only PUBLISHED
   documents accessible to their department assignments.
   RESTRICTED documents are filtered at the database query level.
-  Query  : { state? (DRAFT|PUBLISHED|UNPUBLISHED), category_id?, search? }
-           state filter is silently ignored for contractor role.
+  Query  : { state? (DRAFT|PUBLISHED|UNPUBLISHED), category_id?, search?,
+             department_access? (ALL|RESTRICTED — admin/superadmin only),
+             page? (default 1), limit? (default 20, max 100) }
+           state and department_access filters are silently ignored for contractor role.
+  Returns: PaginatedResponse<Document>
   Access : Admin, Superadmin, Contractor
 
 GET /documents/:id
@@ -277,11 +294,15 @@ POST /videos
   Access : Admin, Superadmin
 
 GET /videos
-  Lists videos. Admins see all is_live states; contractors see only videos
+  Returns a paginated list of videos. Admins see all is_live states; contractors see only videos
   where upload_status = READY and is_live = true, filtered by department access.
   RESTRICTED videos are filtered at the database query level.
-  Query  : { is_live? (boolean), category_id?, search? }
-           is_live filter is silently ignored for contractor role.
+  Query  : { is_live? (boolean), category_id?, search?,
+             upload_status? (UPLOADING|READY|FAILED — admin/superadmin only),
+             department_access? (ALL|RESTRICTED — admin/superadmin only),
+             page? (default 1), limit? (default 20, max 100) }
+           is_live, upload_status, and department_access filters are silently ignored for contractor role.
+  Returns: PaginatedResponse<Video>
   Access : Admin, Superadmin, Contractor
 
 GET /videos/:id/stream
@@ -344,6 +365,9 @@ GET /logs
              limit?        : integer 1–100 (default 50)
            }
   Returns: { data: ActivityLog[], nextCursor: string | null, hasNextPage: boolean }
+           ActivityLog shape: { id, actor_id, actor_role, actor_name, actor_email,
+                                action_type, target_type, target_id,
+                                ip_address, user_agent, metadata, created_at }
   Access : Superadmin only
 
 GET /logs/:id
@@ -402,6 +426,32 @@ Video
   VIDEO_DEPARTMENT_UPDATED        Video access_type or departments replaced
   VIDEO_DELETED                   Video soft-deleted
   VIDEO_STREAMED                  Contractor requested a stream SAS URL
+
+
+════════════════════════════════════════════════════════════════
+  PAGINATION
+════════════════════════════════════════════════════════════════
+
+All list endpoints (except GET /categories/public and GET /logs) return a
+paginated response envelope:
+
+{
+  "data": [...],
+  "meta": {
+    "total": 100,
+    "page": 1,
+    "limit": 20,
+    "totalPages": 5,
+    "hasNextPage": true,
+    "hasPrevPage": false
+  }
+}
+
+  page   : 1-based page number (default 1)
+  limit  : items per page (default 20, max 100)
+
+GET /categories/public — returns a flat array (full tree, no pagination)
+GET /logs              — uses cursor-based pagination (see Audit Logs section)
 
 
 ════════════════════════════════════════════════════════════════

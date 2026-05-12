@@ -6,6 +6,8 @@ import { ActionType } from './enums/action-type.enum';
 export interface LogActionParams {
   actor_id: string;
   actor_role: Role;
+  actor_name?: string;
+  actor_email?: string;
   action_type: ActionType;
   target_type?: string;
   target_id?: string;

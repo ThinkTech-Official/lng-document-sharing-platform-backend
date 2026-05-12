@@ -73,6 +73,8 @@ export class AuthService {
     this.logging.log({
       actor_id: user.id,
       actor_role: user.role,
+      actor_name: user.name,
+      actor_email: user.email,
       action_type: ActionType.AUTH_LOGIN_SUCCESS,
       target_type: 'User',
       target_id: user.id,
@@ -107,7 +109,7 @@ export class AuthService {
 
     const user = await this.prisma.user.findFirst({
       where: { email: dto.email, deleted_at: null },
-      select: { id: true, email: true, role: true, is_active: true },
+      select: { id: true, email: true, name: true, role: true, is_active: true },
     });
 
     if (!user || !user.is_active) return SUCCESS;
@@ -124,6 +126,8 @@ export class AuthService {
     this.logging.log({
       actor_id: user.id,
       actor_role: user.role,
+      actor_name: user.name,
+      actor_email: user.email,
       action_type: ActionType.AUTH_PASSWORD_RESET_REQUESTED,
       target_type: 'User',
       target_id: user.id,
@@ -139,7 +143,7 @@ export class AuthService {
   ): Promise<{ message: string }> {
     const record = await this.prisma.passwordResetToken.findUnique({
       where: { token: dto.token },
-      include: { user: { select: { id: true, role: true } } },
+      include: { user: { select: { id: true, role: true, name: true, email: true } } },
     });
 
     if (!record || record.is_used || record.expires_at < new Date()) {
@@ -171,6 +175,8 @@ export class AuthService {
     this.logging.log({
       actor_id: record.user.id,
       actor_role: record.user.role,
+      actor_name: record.user.name,
+      actor_email: record.user.email,
       action_type: ActionType.AUTH_PASSWORD_RESET_COMPLETED,
       target_type: 'User',
       target_id: record.user.id,
@@ -181,8 +187,7 @@ export class AuthService {
   }
 
   async changePassword(
-    userId: string,
-    userRole: Role,
+    actor: { id: string; role: Role; name?: string; email?: string },
     dto: ChangePasswordDto,
     meta: RequestMeta = {},
   ): Promise<{ message: string }> {
@@ -196,16 +201,18 @@ export class AuthService {
     const hashed = await this.passwordService.hash(dto.new_password);
 
     await this.prisma.user.update({
-      where: { id: userId },
+      where: { id: actor.id },
       data: { password: hashed, force_password_reset: false },
     });
 
     this.logging.log({
-      actor_id: userId,
-      actor_role: userRole,
+      actor_id: actor.id,
+      actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.AUTH_PASSWORD_RESET_COMPLETED,
       target_type: 'User',
-      target_id: userId,
+      target_id: actor.id,
       ...meta,
     });
 
@@ -213,12 +220,14 @@ export class AuthService {
   }
 
   async logout(
-    actor: { id: string; role: Role },
+    actor: { id: string; role: Role; name?: string; email?: string },
     meta: RequestMeta = {},
   ): Promise<{ message: string }> {
     this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.AUTH_LOGOUT,
       target_type: 'User',
       target_id: actor.id,

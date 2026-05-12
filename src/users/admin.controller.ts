@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminService } from './admin.service';
 import { CreateAdminDto } from './dto/create-admin.dto';
+import { ListAdminsDto } from './dto/list-admins.dto';
 import { UpdateAdminDto } from './dto/update-admin.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import type { Request } from 'express';
@@ -40,8 +42,8 @@ export class AdminController {
   }
 
   @Get()
-  findAll() {
-    return this.adminService.findAll();
+  findAll(@Query() query: ListAdminsDto) {
+    return this.adminService.findAll(query);
   }
 
   @Get(':id')

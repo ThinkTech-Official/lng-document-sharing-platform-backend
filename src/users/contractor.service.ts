@@ -10,8 +10,10 @@ import { MailService } from '../auth/mail.service';
 import { PasswordService } from '../auth/password.service';
 import { ActionType } from '../logging/enums/action-type.enum';
 import { LoggingService } from '../logging/logging.service';
+import { paginate } from '../common/helpers/paginate.helper';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateContractorDto } from './dto/create-contractor.dto';
+import { ListContractorsDto } from './dto/list-contractors.dto';
 import { UpdateContractorDto } from './dto/update-contractor.dto';
 import { UpdateDepartmentsDto } from './dto/update-departments.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
@@ -19,6 +21,8 @@ import { UpdateStatusDto } from './dto/update-status.dto';
 interface Actor {
   id: string;
   role: Role;
+  name?: string;
+  email?: string;
 }
 
 interface RequestMeta {
@@ -107,6 +111,8 @@ export class ContractorService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.CONTRACTOR_CREATED,
       target_type: 'User',
       target_id: contractor.id,
@@ -116,13 +122,37 @@ export class ContractorService {
     return this.toContractorResponse(contractor);
   }
 
-  async findAll() {
-    const contractors = await this.prisma.user.findMany({
-      where: { role: Role.CONTRACTOR, deleted_at: null },
-      select: contractorSelect,
-      orderBy: { created_at: 'desc' },
-    });
-    return contractors.map((c) => this.toContractorResponse(c));
+  async findAll(query: ListContractorsDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = { role: Role.CONTRACTOR, deleted_at: null };
+    if (query.search) {
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { email: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+    if (query.is_active !== undefined) {
+      where.is_active = query.is_active;
+    }
+    if (query.department_id) {
+      where.contractor_depts = { some: { department_id: query.department_id } };
+    }
+
+    const [contractors, total] = await this.prisma.$transaction([
+      this.prisma.user.findMany({
+        where,
+        select: contractorSelect,
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    return paginate(contractors.map((c) => this.toContractorResponse(c)), total, page, limit);
   }
 
   async findOne(id: string) {
@@ -158,6 +188,8 @@ export class ContractorService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.CONTRACTOR_UPDATED,
       target_type: 'User',
       target_id: id,
@@ -184,6 +216,8 @@ export class ContractorService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: dto.is_active
         ? ActionType.CONTRACTOR_ACTIVATED
         : ActionType.CONTRACTOR_DEACTIVATED,
@@ -220,6 +254,8 @@ export class ContractorService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.CONTRACTOR_DEPARTMENT_UPDATED,
       target_type: 'User',
       target_id: id,
@@ -240,6 +276,8 @@ export class ContractorService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.CONTRACTOR_DELETED,
       target_type: 'User',
       target_id: id,

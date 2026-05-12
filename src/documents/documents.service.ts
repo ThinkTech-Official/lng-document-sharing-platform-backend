@@ -8,6 +8,7 @@ import { AccessType, DocumentState, FileType, Role } from '@prisma/client';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import { AzureStorageService } from '../azure/azure-storage.service';
+import { paginate } from '../common/helpers/paginate.helper';
 import { LoggingService } from '../logging/logging.service';
 import { ActionType } from '../logging/enums/action-type.enum';
 import { PrismaService } from '../prisma/prisma.service';
@@ -38,6 +39,8 @@ const VALID_TRANSITIONS: Partial<Record<DocumentState, DocumentState[]>> = {
 interface Actor {
   id: string;
   role: Role;
+  name?: string;
+  email?: string;
 }
 
 interface RequestMeta {
@@ -143,6 +146,8 @@ export class DocumentsService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.DOCUMENT_CREATED,
       target_type: 'Document',
       target_id: document.id,
@@ -154,6 +159,9 @@ export class DocumentsService {
 
   async findAll(actor: Actor, query: ListDocumentsDto) {
     const isContractor = actor.role === Role.CONTRACTOR;
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
 
     // Schema relation names used below:
     //   Document.document_departments       → DocumentDepartment[] (junction)
@@ -203,6 +211,7 @@ export class DocumentsService {
       where = {
         deleted_at: null,
         ...(query.state && { state: query.state }),
+        ...(query.department_access && { access_type: query.department_access }),
       };
     }
 
@@ -211,13 +220,18 @@ export class DocumentsService {
       where.title = { contains: query.search, mode: 'insensitive' };
     }
 
-    const documents = await this.prisma.document.findMany({
-      where,
-      select: documentSelect,
-      orderBy: { created_at: 'desc' },
-    });
+    const [documents, total] = await this.prisma.$transaction([
+      this.prisma.document.findMany({
+        where,
+        select: documentSelect,
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.document.count({ where }),
+    ]);
 
-    return documents.map((d) => this.toResponse(d));
+    return paginate(documents.map((d) => this.toResponse(d)), total, page, limit);
   }
 
   async findOne(id: string, actor: Actor, meta: RequestMeta = {}) {
@@ -233,6 +247,8 @@ export class DocumentsService {
       await this.logging.log({
         actor_id: actor.id,
         actor_role: actor.role,
+        actor_name: actor.name,
+        actor_email: actor.email,
         action_type: ActionType.DOCUMENT_VIEWED,
         target_type: 'Document',
         target_id: id,
@@ -266,6 +282,8 @@ export class DocumentsService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.DOCUMENT_UPDATED,
       target_type: 'Document',
       target_id: id,
@@ -301,6 +319,8 @@ export class DocumentsService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.DOCUMENT_REUPLOADED,
       target_type: 'Document',
       target_id: id,
@@ -335,6 +355,8 @@ export class DocumentsService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.DOCUMENT_STATUS_CHANGED,
       target_type: 'Document',
       target_id: id,
@@ -380,6 +402,8 @@ export class DocumentsService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.DOCUMENT_DEPARTMENT_UPDATED,
       target_type: 'Document',
       target_id: id,
@@ -404,6 +428,8 @@ export class DocumentsService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.DOCUMENT_DELETED,
       target_type: 'Document',
       target_id: id,

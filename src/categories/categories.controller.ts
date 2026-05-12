@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
+import { ListCategoriesDto } from './dto/list-categories.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import type { Request } from 'express';
 
@@ -46,8 +48,8 @@ export class CategoriesController {
   }
 
   @Get()
-  findAll() {
-    return this.categoriesService.findAll();
+  findAll(@Query() query: ListCategoriesDto) {
+    return this.categoriesService.findAll(query);
   }
 
   @Get(':id')

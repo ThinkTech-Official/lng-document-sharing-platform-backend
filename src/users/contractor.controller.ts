@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ContractorService } from './contractor.service';
 import { CreateContractorDto } from './dto/create-contractor.dto';
+import { ListContractorsDto } from './dto/list-contractors.dto';
 import { UpdateContractorDto } from './dto/update-contractor.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { UpdateDepartmentsDto } from './dto/update-departments.dto';
@@ -41,8 +43,8 @@ export class ContractorController {
   }
 
   @Get()
-  findAll() {
-    return this.contractorService.findAll();
+  findAll(@Query() query: ListContractorsDto) {
+    return this.contractorService.findAll(query);
   }
 
   @Get(':id')

@@ -6,13 +6,17 @@ import {
 import { Role } from '@prisma/client';
 import { LoggingService } from '../logging/logging.service';
 import { ActionType } from '../logging/enums/action-type.enum';
+import { paginate } from '../common/helpers/paginate.helper';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
+import { ListCategoriesDto } from './dto/list-categories.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 
 interface Actor {
   id: string;
   role: Role;
+  name?: string;
+  email?: string;
 }
 
 interface RequestMeta {
@@ -68,6 +72,8 @@ export class CategoriesService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.CATEGORY_CREATED,
       target_type: 'Category',
       target_id: category.id,
@@ -77,12 +83,38 @@ export class CategoriesService {
     return category;
   }
 
-  async findAll() {
-    return this.prisma.category.findMany({
-      where: { parent_category_id: null, deleted_at: null },
-      select: categorySelect,
-      orderBy: { sort_order: 'asc' },
-    });
+  async findAll(query: ListCategoriesDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = { parent_category_id: null, deleted_at: null };
+    if (query.search) {
+      where.OR = [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        {
+          subcategories: {
+            some: {
+              name: { contains: query.search, mode: 'insensitive' },
+              deleted_at: null,
+            },
+          },
+        },
+      ];
+    }
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.category.findMany({
+        where,
+        select: categorySelect,
+        orderBy: { sort_order: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.category.count({ where }),
+    ]);
+
+    return paginate(data, total, page, limit);
   }
 
   // Public listing for homepage — all authenticated roles
@@ -120,6 +152,8 @@ export class CategoriesService {
     await this.logging.log({
       actor_id: actor.id,
       actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
       action_type: ActionType.CATEGORY_UPDATED,
       target_type: 'Category',
       target_id: id,
@@ -149,6 +183,8 @@ export class CategoriesService {
       await this.logging.log({
         actor_id: actor.id,
         actor_role: actor.role,
+        actor_name: actor.name,
+        actor_email: actor.email,
         action_type: ActionType.CATEGORY_DELETED,
         target_type: 'Category',
         target_id: id,
@@ -164,6 +200,8 @@ export class CategoriesService {
       await this.logging.log({
         actor_id: actor.id,
         actor_role: actor.role,
+        actor_name: actor.name,
+        actor_email: actor.email,
         action_type: ActionType.CATEGORY_DELETED,
         target_type: 'Category',
         target_id: id,

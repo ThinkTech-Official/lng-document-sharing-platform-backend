@@ -1,7 +1,8 @@
-import { DocumentState } from '@prisma/client';
+import { AccessType, DocumentState } from '@prisma/client';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
-export class ListDocumentsDto {
+export class ListDocumentsDto extends PaginationDto {
   @IsOptional()
   @IsEnum(DocumentState)
   state?: DocumentState;
@@ -13,4 +14,8 @@ export class ListDocumentsDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsEnum(AccessType)
+  department_access?: AccessType;
 }

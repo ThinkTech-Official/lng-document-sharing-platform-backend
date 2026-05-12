@@ -1,8 +1,9 @@
+import { AccessType, UploadStatus } from '@prisma/client';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString } from 'class-validator';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
-export class ListVideosDto {
-  // Admin-only filter; ignored for contractors (always forced to true)
+export class ListVideosDto extends PaginationDto {
   @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
@@ -15,4 +16,12 @@ export class ListVideosDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsEnum(UploadStatus)
+  upload_status?: UploadStatus;
+
+  @IsOptional()
+  @IsEnum(AccessType)
+  department_access?: AccessType;
 }

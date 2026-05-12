@@ -58,7 +58,7 @@ export class AuthController {
     @CurrentUser() actor,
     @Req() req: Request,
   ) {
-    return this.authService.changePassword(actor.id, actor.role, dto, {
+    return this.authService.changePassword(actor, dto, {
       ip_address: req.requestMeta?.ip_address,
       user_agent: req.requestMeta?.user_agent,
     });
