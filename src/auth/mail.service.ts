@@ -25,7 +25,7 @@ export class MailService {
   }
 
   async sendPasswordResetLink(to: string, token: string): Promise<void> {
-    const link = `${process.env.APP_URL}/auth/reset-password?token=${token}`;
+    const link = `${process.env.APP_URL}/reset-password?token=${token}`;
     await this.transporter.sendMail({
       from: this.from,
       to,
@@ -46,7 +46,8 @@ export class MailService {
     tempPassword: string,
     subject: string = 'Your LNG Platform Account Has Been Created',
   ): Promise<void> {
-    const resetUrl = `${process.env.APP_URL}/auth/change-password`;
+    // const resetUrl = `${process.env.APP_URL}/auth/change-password`;
+    const resetUrl = `${process.env.APP_URL}/force-reset`;
     await this.transporter.sendMail({
       from: this.from,
       to,
@@ -57,7 +58,7 @@ export class MailService {
         <p><strong>Email:</strong> ${to}</p>
         <p><strong>Temporary Password:</strong> ${tempPassword}</p>
         <p>For security, you must change your password on first login.</p>
-        <p>Login and use this endpoint to set a new password:</p>
+        <p>Please click the link below to log in and set your permanent password:</p>
         <p><a href="${resetUrl}">${resetUrl}</a></p>
         <p>If you did not expect this email, please contact your administrator.</p>
       `,
