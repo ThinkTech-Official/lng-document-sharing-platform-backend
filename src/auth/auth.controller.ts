@@ -1,4 +1,5 @@
 import { Body, Controller, Patch, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
@@ -19,6 +20,7 @@ export class AuthController {
     return req.requestMeta ?? {};
   }
 
+  @Throttle({ short: { ttl: 60000, limit: 5 } })
   @Post('login')
   async login(
     @Body() dto: LoginDto,
@@ -41,16 +43,19 @@ export class AuthController {
     return { user };
   }
 
+  @Throttle({ short: { ttl: 60000, limit: 3 } })
   @Post('forgot-password')
   forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
     return this.authService.forgotPassword(dto, this.meta(req));
   }
 
+  @Throttle({ short: { ttl: 60000, limit: 5 } })
   @Post('reset-password')
   resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request) {
     return this.authService.resetPassword(dto, this.meta(req));
   }
 
+  @SkipThrottle()
   @UseGuards(JwtAuthGuard)
   @Patch('change-password')
   changePassword(
@@ -64,6 +69,7 @@ export class AuthController {
     });
   }
 
+  @SkipThrottle()
   @UseGuards(JwtAuthGuard)
   @Post('logout')
   async logout(

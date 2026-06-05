@@ -24,7 +24,16 @@ interface RequestMeta {
   user_agent?: string;
 }
 
-// Reused by both findAll and findOne for consistent shape
+// 3-level hierarchy: root → subcategory → child subcategory
+const childSelect = {
+  id: true,
+  name: true,
+  sort_order: true,
+  parent_category_id: true,
+  created_at: true,
+  updated_at: true,
+} as const;
+
 const subcategorySelect = {
   id: true,
   name: true,
@@ -32,6 +41,11 @@ const subcategorySelect = {
   parent_category_id: true,
   created_at: true,
   updated_at: true,
+  subcategories: {
+    where: { deleted_at: null },
+    select: childSelect,
+    orderBy: { sort_order: 'asc' as const },
+  },
 } as const;
 
 const categorySelect = {
@@ -59,6 +73,8 @@ export class CategoriesService {
     if (dto.parent_category_id) {
       await this.assertValidParent(dto.parent_category_id);
     }
+
+    await this.assertUniqueName(dto.name, dto.parent_category_id ?? null);
 
     const category = await this.prisma.category.create({
       data: {
@@ -97,6 +113,19 @@ export class CategoriesService {
             some: {
               name: { contains: query.search, mode: 'insensitive' },
               deleted_at: null,
+            },
+          },
+        },
+        {
+          subcategories: {
+            some: {
+              deleted_at: null,
+              subcategories: {
+                some: {
+                  name: { contains: query.search, mode: 'insensitive' },
+                  deleted_at: null,
+                },
+              },
             },
           },
         },
@@ -141,7 +170,12 @@ export class CategoriesService {
     actor: Actor,
     meta: RequestMeta = {},
   ) {
-    await this.findOne(id);
+    if (dto.name) {
+      const existing = await this.findOne(id);
+      await this.assertUniqueName(dto.name, existing.parent_category_id, id);
+    } else {
+      await this.findOne(id);
+    }
 
     const updated = await this.prisma.category.update({
       where: { id },
@@ -168,7 +202,36 @@ export class CategoriesService {
     const now = new Date();
 
     if (category.parent_category_id === null) {
-      // Root category: cascade soft delete to all active subcategories
+      // Root category: cascade to subcategories and their children (3rd level)
+      const subcategories = await this.prisma.category.findMany({
+        where: { parent_category_id: id, deleted_at: null },
+        select: { id: true },
+      });
+      const subcategoryIds = subcategories.map((s) => s.id);
+
+      await this.prisma.$transaction([
+        this.prisma.category.update({
+          where: { id },
+          data: { deleted_at: now },
+        }),
+        this.prisma.category.updateMany({
+          where: { parent_category_id: id, deleted_at: null },
+          data: { deleted_at: now },
+        }),
+        ...(subcategoryIds.length > 0
+          ? [
+              this.prisma.category.updateMany({
+                where: {
+                  parent_category_id: { in: subcategoryIds },
+                  deleted_at: null,
+                },
+                data: { deleted_at: now },
+              }),
+            ]
+          : []),
+      ]);
+    } else {
+      // Subcategory or child: cascade to own children as well
       await this.prisma.$transaction([
         this.prisma.category.update({
           where: { id },
@@ -179,53 +242,71 @@ export class CategoriesService {
           data: { deleted_at: now },
         }),
       ]);
-
-      await this.logging.log({
-        actor_id: actor.id,
-        actor_role: actor.role,
-        actor_name: actor.name,
-        actor_email: actor.email,
-        action_type: ActionType.CATEGORY_DELETED,
-        target_type: 'Category',
-        target_id: id,
-        ...meta,
-      });
-    } else {
-      // Subcategory: only soft delete itself
-      await this.prisma.category.update({
-        where: { id },
-        data: { deleted_at: now },
-      });
-
-      await this.logging.log({
-        actor_id: actor.id,
-        actor_role: actor.role,
-        actor_name: actor.name,
-        actor_email: actor.email,
-        action_type: ActionType.CATEGORY_DELETED,
-        target_type: 'Category',
-        target_id: id,
-        ...meta,
-      });
     }
+
+    await this.logging.log({
+      actor_id: actor.id,
+      actor_role: actor.role,
+      actor_name: actor.name,
+      actor_email: actor.email,
+      action_type: ActionType.CATEGORY_DELETED,
+      target_type: 'Category',
+      target_id: id,
+      ...meta,
+    });
 
     return { message: 'Category deleted' };
   }
 
+  private async assertUniqueName(
+    name: string,
+    parentCategoryId: string | null,
+    excludeId?: string,
+  ): Promise<void> {
+    const existing = await this.prisma.category.findFirst({
+      where: {
+        name: { equals: name, mode: 'insensitive' },
+        parent_category_id: parentCategoryId,
+        deleted_at: null,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        parentCategoryId
+          ? 'A subcategory with this name already exists under this parent'
+          : 'A category with this name already exists',
+      );
+    }
+  }
+
   /**
-   * Ensures the proposed parent exists, is not soft-deleted, and is itself
-   * a root category — subcategories cannot be used as parents (max depth 1).
+   * Ensures the proposed parent exists, is not soft-deleted, and is at most
+   * depth 1 (subcategory) — max supported depth is 2 levels:
+   *   root (depth 0) → subcategory (depth 1) → child subcategory (depth 2)
+   * Attempting to nest beyond depth 2 returns 400.
    */
   private async assertValidParent(parentId: string): Promise<void> {
     const parent = await this.prisma.category.findFirst({
       where: { id: parentId, deleted_at: null },
-      select: { id: true, parent_category_id: true },
+      select: {
+        id: true,
+        parent_category_id: true,
+        parent: { select: { parent_category_id: true } },
+      },
     });
 
     if (!parent) throw new NotFoundException('Parent category not found');
 
     if (parent.parent_category_id !== null) {
-      throw new BadRequestException('Subcategories cannot have children');
+      // parent is a subcategory — only allowed if its own parent is a root
+      if (parent.parent?.parent_category_id !== null) {
+        throw new BadRequestException(
+          'Maximum category depth is 2 levels. Child subcategories cannot have children.',
+        );
+      }
+      // parent.parent is a root → creating a child subcategory (depth 2) ✓
     }
+    // parent is a root → creating a subcategory (depth 1) ✓
   }
 }

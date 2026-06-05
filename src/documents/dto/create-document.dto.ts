@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  IsUrl,
   MinLength,
 } from 'class-validator';
 
@@ -12,6 +13,10 @@ export class CreateDocumentDto {
   @IsString()
   @MinLength(2)
   title: string;
+
+  @IsOptional()
+  @IsUrl({}, { message: 'external_url must be a valid URL' })
+  external_url?: string;
 
   @IsOptional()
   @IsString()

@@ -68,7 +68,15 @@ const documentSelect = {
         select: {
           id: true,
           name: true,
+          parent_category_id: true,
           deleted_at: true,
+          parent: {
+            select: {
+              id: true,
+              name: true,
+              deleted_at: true,
+            },
+          },
         },
       },
     },
@@ -93,16 +101,18 @@ export class DocumentsService {
   ) {}
 
   async create(
-    file: Express.Multer.File,
+    file: Express.Multer.File | undefined,
     dto: CreateDocumentDto,
     actor: Actor,
     meta: RequestMeta = {},
   ) {
-    console.log('=== DOCUMENT CREATE DTO ===');
-    console.log('access_type:', dto.access_type);
-    console.log('department_ids:', dto.department_ids);
-    console.log('===========================');
-    const fileType = this.resolveFileType(file.mimetype);
+    if (!file && !dto.external_url) {
+      throw new BadRequestException('Either a file or an external URL is required');
+    }
+    if (file && dto.external_url) {
+      throw new BadRequestException('Provide either a file or an external URL, not both');
+    }
+
     await this.assertCategoryExists(dto.category_id);
 
     if (dto.access_type === AccessType.RESTRICTED) {
@@ -114,13 +124,22 @@ export class DocumentsService {
       await this.validateDepartments(dto.department_ids);
     }
 
-    const blobName = `${crypto.randomUUID()}-${Date.now()}-${this.sanitizeFilename(file.originalname)}`;
-    const file_url = await this.azure.uploadFile(
-      this.container,
-      blobName,
-      file.buffer,
-      file.mimetype,
-    );
+    let file_url: string;
+    let fileType: FileType;
+
+    if (dto.external_url) {
+      file_url = dto.external_url;
+      fileType = FileType.LINK;
+    } else {
+      fileType = this.resolveFileType(file!.mimetype);
+      const blobName = `${crypto.randomUUID()}-${Date.now()}-${this.sanitizeFilename(file!.originalname)}`;
+      file_url = await this.azure.uploadFile(
+        this.container,
+        blobName,
+        file!.buffer,
+        file!.mimetype,
+      );
+    }
 
     const document = await this.prisma.document.create({
       data: {
@@ -256,8 +275,13 @@ export class DocumentsService {
       });
     }
 
-    const blobName = this.azure.extractBlobName(document.file_url, this.container);
-    const sasUrl = await this.azure.generateSasUrl(this.container, blobName, 60, true);
+    let sasUrl: string;
+    if (document.file_type === FileType.LINK) {
+      sasUrl = document.file_url;
+    } else {
+      const blobName = this.azure.extractBlobName(document.file_url, this.container);
+      sasUrl = await this.azure.generateSasUrl(this.container, blobName, 60, true);
+    }
     return this.toResponse(document, sasUrl);
   }
 
@@ -267,15 +291,27 @@ export class DocumentsService {
     actor: Actor,
     meta: RequestMeta = {},
   ) {
-    await this.findExisting(id);
+    const existing = await this.findExisting(id);
 
     if (dto.category_id) {
       await this.assertCategoryExists(dto.category_id);
     }
 
+    const { external_url, ...rest } = dto;
+    const updateData: Record<string, unknown> = { ...rest };
+
+    if (external_url !== undefined) {
+      if (existing.file_type !== FileType.LINK) {
+        throw new BadRequestException(
+          'external_url can only be updated on link-type documents',
+        );
+      }
+      updateData.file_url = external_url;
+    }
+
     const updated = await this.prisma.document.update({
       where: { id },
-      data: dto,
+      data: updateData,
       select: documentSelect,
     });
 
@@ -299,7 +335,12 @@ export class DocumentsService {
     actor: Actor,
     meta: RequestMeta = {},
   ) {
-    await this.findExisting(id);
+    const existing = await this.findExisting(id);
+    if (existing.file_type === FileType.LINK) {
+      throw new BadRequestException(
+        'Link documents cannot have a file reuploaded. Update the URL via PATCH /documents/:id instead.',
+      );
+    }
     const fileType = this.resolveFileType(file.mimetype);
 
     const blobName = `${crypto.randomUUID()}-${Date.now()}-${this.sanitizeFilename(file.originalname)}`;
@@ -512,18 +553,33 @@ export class DocumentsService {
       id: string;
       name: string;
       parent_category_id: string | null;
-      parent: { id: string; name: string } | null;
+      parent: {
+        id: string;
+        name: string;
+        parent_category_id: string | null;
+        parent: { id: string; name: string } | null;
+      } | null;
     } | null = null;
 
     if (raw && !raw.deleted_at) {
+      const rawParent = raw.parent && !raw.parent.deleted_at ? raw.parent : null;
+      const rawGrandparent =
+        rawParent?.parent && !rawParent.parent.deleted_at ? rawParent.parent : null;
+
       category = {
         id: raw.id,
         name: raw.name,
         parent_category_id: raw.parent_category_id ?? null,
-        parent:
-          raw.parent && !raw.parent.deleted_at
-            ? { id: raw.parent.id, name: raw.parent.name }
-            : null,
+        parent: rawParent
+          ? {
+              id: rawParent.id,
+              name: rawParent.name,
+              parent_category_id: rawParent.parent_category_id ?? null,
+              parent: rawGrandparent
+                ? { id: rawGrandparent.id, name: rawGrandparent.name }
+                : null,
+            }
+          : null,
       };
     }
 

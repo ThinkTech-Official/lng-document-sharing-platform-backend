@@ -46,7 +46,29 @@ const videoSelect = {
   deleted_at: true,
   created_at: true,
   updated_at: true,
-  category: { select: { id: true, name: true, deleted_at: true } },
+  category: {
+    select: {
+      id: true,
+      name: true,
+      parent_category_id: true,
+      deleted_at: true,
+      parent: {
+        select: {
+          id: true,
+          name: true,
+          parent_category_id: true,
+          deleted_at: true,
+          parent: {
+            select: {
+              id: true,
+              name: true,
+              deleted_at: true,
+            },
+          },
+        },
+      },
+    },
+  },
   created_by: { select: { id: true, name: true, email: true } },
   video_departments: {
     select: {
@@ -162,38 +184,57 @@ export class VideosService {
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
 
-    const where: any = {
-      deleted_at: null,
-      ...(isContractor
-        ? {
-            is_live: true,
-            upload_status: UploadStatus.READY,
-            OR: [
-              { access_type: AccessType.ALL },
-              {
-                access_type: AccessType.RESTRICTED,
-                video_departments: {
-                  some: {
-                    department: {
-                      contractor_depts: {
-                        some: { contractor_id: actor.id },
-                      },
-                    },
-                  },
+    let where: any;
+
+    if (isContractor) {
+      // Pre-fetch contractor's department IDs — same approach as documents.service.ts.
+      // Nested Prisma relation traversal (video → dept → contractor_dept → contractor_id)
+      // does not filter correctly and allows contractors to see RESTRICTED videos they
+      // should not have access to.
+      const contractorDepts = await this.prisma.contractorDepartment.findMany({
+        where: { contractor_id: actor.id },
+        select: { department_id: true },
+      });
+      const contractorDepartmentIds = contractorDepts.map((d) => d.department_id);
+
+      if (contractorDepartmentIds.length === 0) {
+        where = {
+          deleted_at: null,
+          is_live: true,
+          upload_status: UploadStatus.READY,
+          access_type: AccessType.ALL,
+        };
+      } else {
+        where = {
+          deleted_at: null,
+          is_live: true,
+          upload_status: UploadStatus.READY,
+          OR: [
+            { access_type: AccessType.ALL },
+            {
+              access_type: AccessType.RESTRICTED,
+              video_departments: {
+                some: {
+                  department_id: { in: contractorDepartmentIds },
                 },
               },
-            ],
-          }
-        : {
-            ...(query.is_live !== undefined && { is_live: query.is_live }),
-            ...(query.upload_status && { upload_status: query.upload_status }),
-            ...(query.department_access && { access_type: query.department_access }),
-          }),
-      ...(query.category_id && { category_id: query.category_id }),
-      ...(query.search && {
-        title: { contains: query.search, mode: 'insensitive' },
-      }),
-    };
+            },
+          ],
+        };
+      }
+    } else {
+      where = {
+        deleted_at: null,
+        ...(query.is_live !== undefined && { is_live: query.is_live }),
+        ...(query.upload_status && { upload_status: query.upload_status }),
+        ...(query.department_access && { access_type: query.department_access }),
+      };
+    }
+
+    if (query.category_id) where.category_id = query.category_id;
+    if (query.search) {
+      where.title = { contains: query.search, mode: 'insensitive' };
+    }
 
     const [videos, total] = await this.prisma.$transaction([
       this.prisma.video.findMany({
@@ -479,12 +520,46 @@ export class VideosService {
 
   // Strips blob_url, thumbnail_url, deleted_at; resolves soft-deleted category to null
   private toResponse(video: any, thumbnailSasUrl?: string) {
-    const { blob_url, thumbnail_url, deleted_at: _del, category, ...rest } = video;
-    const { deleted_at: catDel, ...cat } = category ?? {};
+    const { blob_url, thumbnail_url, deleted_at: _del, category: raw, ...rest } = video;
+
+    let category: {
+      id: string;
+      name: string;
+      parent_category_id: string | null;
+      parent: {
+        id: string;
+        name: string;
+        parent_category_id: string | null;
+        parent: { id: string; name: string } | null;
+      } | null;
+    } | null = null;
+
+    if (raw && !raw.deleted_at) {
+      const rawParent = raw.parent && !raw.parent.deleted_at ? raw.parent : null;
+      const rawGrandparent =
+        rawParent?.parent && !rawParent.parent.deleted_at ? rawParent.parent : null;
+
+      category = {
+        id: raw.id,
+        name: raw.name,
+        parent_category_id: raw.parent_category_id ?? null,
+        parent: rawParent
+          ? {
+              id: rawParent.id,
+              name: rawParent.name,
+              parent_category_id: rawParent.parent_category_id ?? null,
+              parent: rawGrandparent
+                ? { id: rawGrandparent.id, name: rawGrandparent.name }
+                : null,
+            }
+          : null,
+      };
+    }
+
     return {
       ...rest,
       ...(thumbnailSasUrl !== undefined && { thumbnail_sas_url: thumbnailSasUrl }),
-      category: category && !catDel ? { id: cat.id, name: cat.name } : null,
+      category,
     };
   }
 }

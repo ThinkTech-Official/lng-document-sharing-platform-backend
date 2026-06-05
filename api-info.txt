@@ -171,29 +171,33 @@ DELETE /departments/:id
 ════════════════════════════════════════════════════════════════
 
 GET /categories/public
-  Returns all root categories with their active subcategories.
+  Returns all root categories with their active subcategories and child subcategories.
   Intended for the contractor-facing homepage. Ordered by sort_order asc.
   (Declared before /:id to prevent routing conflict.)
   Access : Admin, Superadmin, Contractor
 
 POST /categories
-  Creates a root category or a subcategory.
-  Set parent_category_id to create a subcategory (max depth = 1;
-  subcategories cannot themselves be parents).
+  Creates a root category, a subcategory, or a child subcategory (max depth = 2).
+  Set parent_category_id to create a subcategory under a root, or a child subcategory
+  under a subcategory. 3 levels supported: root → subcategory → child subcategory.
+  Child subcategories cannot themselves be parents (max depth = 2).
   Body   : { name: string (min 2), parent_category_id?: string, sort_order?: number (default 0) }
   Access : Admin, Superadmin
 
 GET /categories
-  Returns a paginated list of root categories with their active subcategories inline.
-  Pagination applies to root categories only; subcategories are always included in full.
-  Search matches root category name OR any subcategory name (returns the parent root in that case).
-  Query  : { page? (default 1), limit? (default 20, max 100), search? (root or subcategory name) }
-  Returns: PaginatedResponse<Category>  — each item includes subcategories[]
+  Returns a paginated list of root categories with their full 3-level tree inline.
+  Pagination applies to root categories only; subcategories and child subcategories
+  are always included in full.
+  Search matches root name, subcategory name, OR child subcategory name
+  (always returns the root category as the top-level result).
+  Query  : { page? (default 1), limit? (default 20, max 100), search? }
+  Returns: PaginatedResponse<Category>  — each root item includes subcategories[],
+           each subcategory includes its own subcategories[] (child subcategories).
   Ordered by sort_order asc.
   Access : Admin, Superadmin
 
 GET /categories/:id
-  Returns a single category or subcategory by ID.
+  Returns a single category, subcategory, or child subcategory by ID.
   Access : Admin, Superadmin
 
 PATCH /categories/:id
@@ -202,9 +206,10 @@ PATCH /categories/:id
   Access : Admin, Superadmin
 
 DELETE /categories/:id
-  Soft-deletes a category. If it is a root category, all of its active
-  subcategories are also soft-deleted in the same transaction.
-  Deleting a subcategory does not affect its parent.
+  Soft-deletes a category. If it is a root category, all of its active subcategories
+  AND their child subcategories are also soft-deleted in the same transaction.
+  If it is a subcategory, its child subcategories are also soft-deleted.
+  Deleting a child subcategory does not affect its parent.
   Documents and videos whose category is soft-deleted return category: null.
   Access : Admin, Superadmin
 
@@ -214,13 +219,23 @@ DELETE /categories/:id
 ════════════════════════════════════════════════════════════════
 
 POST /documents
-  Uploads a new document to Azure Blob Storage. Accepted MIME types:
-  PDF, DOC, DOCX, XLS, XLSX, JPG, PNG. Max file size: 50 MB.
-  Document starts in DRAFT state. For RESTRICTED access, department_ids
-  is required and validated (soft-deleted departments rejected).
+  Creates a document. Accepts either a file upload OR an external URL — not both.
+  Exactly one of file or external_url must be present; providing both or neither returns 400.
+
+  FILE upload: Accepted MIME types: PDF, DOC, DOCX, XLS, XLSX, JPG, PNG. Max size: 50 MB.
+    file_type is set automatically from the MIME type.
+    File is stored in Azure Blob Storage.
+  EXTERNAL URL: Provide external_url (must be a valid URL) with no file attached.
+    file_type is set to LINK. No Azure upload occurs.
+    document_url on GET /documents/:id will be the external URL directly.
+
+  Document starts in DRAFT state. For RESTRICTED access, department_ids is required.
   Content-Type : multipart/form-data
-  Fields       : file (required), title, description?, category_id,
-                 access_type? (ALL | RESTRICTED), department_ids? (string[])
+  Fields       : file (required if no external_url),
+                 external_url (required if no file, must be a valid URL),
+                 title (required, min 2), description?, category_id (required),
+                 access_type? (ALL | RESTRICTED, default ALL),
+                 department_ids? (string[], required when access_type=RESTRICTED)
   Access : Admin, Superadmin
 
 GET /documents
@@ -238,18 +253,24 @@ GET /documents/:id
   Returns a single document. Contractors are access-checked: document must
   be PUBLISHED and either ALL or matching the contractor's departments.
   Contractor views are logged as DOCUMENT_VIEWED on every call.
+  document_url field: for file documents this is a 60-minute SAS URL;
+  for LINK type documents this is the stored external URL — open directly in a new tab.
   Access : Admin, Superadmin, Contractor
 
 PATCH /documents/:id
-  Updates a document's title, description, and/or category.
+  Updates a document's title, description, category, and/or external URL.
   Does not change state or access settings.
-  Body   : { title?: string, description?: string, category_id?: string }
+  external_url may only be supplied for LINK type documents; returns 400 otherwise.
+  Body   : { title?: string, description?: string, category_id?: string,
+             external_url?: string (LINK type only) }
   Access : Admin, Superadmin
 
 PATCH /documents/:id/reupload
   Replaces the stored file with a new upload. Updates file_url and file_type.
   Does not change the document state or department access.
   Old blob remains in Azure Storage (no cleanup).
+  Not available for LINK type documents — returns 400 if attempted.
+  Use PATCH /documents/:id with external_url to update a link document's URL.
   Content-Type : multipart/form-data
   Fields       : file (required)
   Access : Admin, Superadmin
@@ -376,6 +397,17 @@ GET /logs/:id
 
 
 ════════════════════════════════════════════════════════════════
+  FILE TYPE ENUM  —  prisma/schema.prisma FileType
+════════════════════════════════════════════════════════════════
+
+  PDF    — PDF file uploaded to Azure Blob Storage
+  DOC    — Word document (.doc or .docx) uploaded to Azure Blob Storage
+  EXCEL  — Excel spreadsheet (.xls or .xlsx) uploaded to Azure Blob Storage
+  IMAGE  — Image file (.jpg or .png) uploaded to Azure Blob Storage
+  LINK   — External hyperlink; no blob stored; document_url is the external URL
+
+
+════════════════════════════════════════════════════════════════
   ACTION TYPE ENUM  —  src/logging/enums/action-type.enum.ts
 ════════════════════════════════════════════════════════════════
 
@@ -459,7 +491,10 @@ GET /logs              — uses cursor-based pagination (see Audit Logs section)
 ════════════════════════════════════════════════════════════════
 
 Authentication
-  All protected routes require:  Authorization: Bearer <jwt_token>
+  All protected routes require the HttpOnly cookie lng_token.
+  The cookie is set automatically by POST /auth/login and cleared by POST /auth/logout.
+  The browser sends it automatically — no Authorization header is needed or used.
+  withCredentials: true is required on all frontend requests.
   JWT payload contains: { sub (user_id), role, force_password_reset }
   JWT expiry: 24 hours. Secret from JWT_SECRET environment variable.
   Soft-deleted users are rejected in the JWT strategy validate() step.
@@ -501,8 +536,8 @@ Soft-Deleted Department Assignment
   Assigning a soft-deleted department returns 400.
 
 Category Depth Limit
-  Only one level of hierarchy is permitted: root → subcategory.
-  Attempting to set a subcategory as a parent returns 400.
+  Two levels of hierarchy are supported: root → subcategory → child subcategory.
+  Attempting to create a 4th level (child subcategory as a parent) returns 400.
 
 Logging — Fire-and-Forget
   LoggingService.log() is synchronous from the caller's perspective.

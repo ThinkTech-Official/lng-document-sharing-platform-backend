@@ -170,6 +170,12 @@ export class AuthService {
         where: { id: record.user.id },
         data: { password: hashed, force_password_reset: false },
       }),
+      this.prisma.passwordResetToken.deleteMany({
+        where: {
+          user_id: record.user.id,
+          OR: [{ is_used: true }, { expires_at: { lt: new Date() } }],
+        },
+      }),
     ]);
 
     this.logging.log({

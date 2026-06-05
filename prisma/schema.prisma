@@ -30,6 +30,7 @@ enum FileType {
   DOC
   EXCEL
   IMAGE
+  LINK
 }
 
 enum UploadStatus {
@@ -57,6 +58,8 @@ model User {
   documents_created     Document[]             @relation("DocumentCreatedBy")
   videos_created        Video[]                @relation("VideoCreatedBy")
 
+  @@index([role])
+  @@index([deleted_at])
   @@map("users")
 }
 
@@ -98,6 +101,7 @@ model ContractorDepartment {
   department Department @relation(fields: [department_id], references: [id])
 
   @@id([contractor_id, department_id])
+  @@index([department_id])
   @@map("contractor_departments")
 }
 
@@ -118,6 +122,8 @@ model Category {
   documents Document[]
   videos    Video[]
 
+  @@index([parent_category_id])
+  @@index([deleted_at])
   @@map("categories")
 }
 
@@ -143,6 +149,11 @@ model Document {
 
   document_departments DocumentDepartment[]
 
+  @@index([state])
+  @@index([category_id])
+  @@index([created_at])
+  @@index([deleted_at])
+  @@index([access_type])
   @@map("documents")
 }
 
@@ -180,6 +191,11 @@ model Video {
 
   video_departments VideoDepartment[]
 
+  @@index([category_id])
+  @@index([created_at])
+  @@index([deleted_at])
+  @@index([is_live])
+  @@index([upload_status])
   @@map("videos")
 }
 

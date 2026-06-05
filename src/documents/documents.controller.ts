@@ -45,7 +45,7 @@ export class DocumentsController {
   @Post()
   @UseInterceptors(uploadInterceptor)
   create(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: Express.Multer.File | undefined,
     @Body() dto: CreateDocumentDto,
     @CurrentUser() actor,
     @Req() req: Request,
