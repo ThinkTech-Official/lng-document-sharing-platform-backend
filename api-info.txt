@@ -367,6 +367,51 @@ DELETE /videos/:id
 
 
 ════════════════════════════════════════════════════════════════
+  NOTIFICATIONS  —  /notifications
+════════════════════════════════════════════════════════════════
+
+GET /notifications
+  Returns a paginated list of notifications
+  ordered by created_at descending (newest first).
+  Contractors receive all notifications (no pagination
+  applied unless params are passed).
+  Admins can search and paginate.
+  Query  : {
+    page?   : number (default 1)
+    limit?  : number (default 20, max 100)
+    search? : string (searches title and content)
+  }
+  Returns: PaginatedResponse<Notification>
+  Access : Admin, Superadmin, Contractor
+
+POST /notifications
+  Creates a new notification broadcast.
+  Body   : {
+    title    : string (max 200 chars)
+    content  : string (HTML from rich text editor)
+    category : 'red' | 'orange' | 'yellow' |
+               'green' | 'blue' | 'black'
+  }
+  Returns: Notification
+  Access : Admin, Superadmin only
+
+DELETE /notifications/:id
+  Hard-deletes a notification.
+  404 if not found.
+  Returns: { message: 'Notification deleted' }
+  Access : Admin, Superadmin only
+
+Notification shape:
+{
+  id:         string
+  title:      string
+  content:    string (HTML)
+  category:   string
+  created_at: string (ISO datetime)
+}
+
+
+════════════════════════════════════════════════════════════════
   AUDIT LOGS  —  /logs
 ════════════════════════════════════════════════════════════════
 
@@ -450,6 +495,10 @@ Document
   DOCUMENT_DEPARTMENT_UPDATED     Document access_type or departments replaced
   DOCUMENT_DELETED                Document soft-deleted
   DOCUMENT_VIEWED                 Contractor viewed a document (GET /documents/:id)
+
+Notification
+  NOTIFICATION_CREATED            Admin created a notification
+  NOTIFICATION_DELETED            Admin deleted a notification
 
 Video
   VIDEO_CREATED                   Video and thumbnail uploaded

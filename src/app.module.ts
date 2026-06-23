@@ -14,6 +14,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { VideosModule } from './videos/videos.module';
 import { LoggingModule } from './logging/logging.module';
 import { StatsModule } from './stats/stats.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { StatsModule } from './stats/stats.module';
     DocumentsModule,
     VideosModule,
     StatsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [

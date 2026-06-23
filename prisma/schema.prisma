@@ -210,6 +210,20 @@ model VideoDepartment {
   @@map("video_departments")
 }
 
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+model Notification {
+  id         String   @id @default(cuid())
+  title      String
+  content    String   @db.Text
+  category   String
+  created_at DateTime @default(now())
+
+  @@index([created_at])
+  @@index([category])
+  @@map("notifications")
+}
+
 // ─── Logging ──────────────────────────────────────────────────────────────────
 // Stored in its own clearly-named table, separate from application tables.
 // No FK constraints: actors and targets may be soft-deleted but logs must remain.
