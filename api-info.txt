@@ -395,11 +395,37 @@ POST /notifications
   Returns: Notification
   Access : Admin, Superadmin only
 
+GET /notifications/:id
+  Returns a single notification by ID.
+  404 if not found.
+  Returns: Notification
+  Access : Admin, Superadmin only
+
+PATCH /notifications/:id
+  Updates a notification's title, content, and/or category.
+  All fields optional. 404 if not found.
+  Body   : {
+    title?   : string (max 200 chars)
+    content? : string (HTML)
+    category?: 'red'|'orange'|'yellow'|'green'|'blue'|'black'
+  }
+  Returns: Updated Notification
+  Access : Admin, Superadmin only
+
 DELETE /notifications/:id
   Hard-deletes a notification.
   404 if not found.
   Returns: { message: 'Notification deleted' }
   Access : Admin, Superadmin only
+
+POST /notifications/upload-image
+  Uploads an image file to Azure Blob Storage
+  for use inside notification rich text content.
+  Returns a permanent URL to embed in the HTML.
+  Content-Type : multipart/form-data
+  Fields       : image (required — JPG, PNG, GIF, WebP, max 5 MB)
+  Returns      : { url: string }
+  Access       : Admin, Superadmin only
 
 Notification shape:
 {
@@ -498,6 +524,7 @@ Document
 
 Notification
   NOTIFICATION_CREATED            Admin created a notification
+  NOTIFICATION_UPDATED            Admin updated a notification
   NOTIFICATION_DELETED            Admin deleted a notification
 
 Video
